@@ -1,0 +1,123 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <style>
+    html, body { margin:0; height:100%; overflow:hidden; background:#000; }
+    #c { position:fixed; inset:0; width:100%; height:100%; }
+    #btn { position:fixed; bottom:10px; left:10px; z-index:10; }
+    #info {
+      position:fixed; top:0; left:0; right:0;
+      background:rgba(0,0,0,.6); color:#0f0;
+      font:12px monospace; padding:4px; z-index:10;
+      white-space:pre;
+    }
+  </style>
+</head>
+<body>
+<div id="info">waiting...</div>
+<button id="btn">Start</button>
+<canvas id="c"></canvas>
+
+<script type="module">
+import * as THREE from "https://unpkg.com/three@0.160.1/build/three.module.js";
+
+const IMAGE_URL = "./assets/object.jpg";
+
+/* === 目的地（仮）=== */
+const TARGET_LAT = 39.696845;
+const TARGET_LON = 141.149665;
+
+const info = document.getElementById("info");
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, alpha:true });
+renderer.setPixelRatio(1);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+camera.position.set(0,0,0);
+
+const video = document.createElement("video");
+video.playsInline = true; video.muted = true;
+
+let plane;
+let heading = 0;      // スマホの向き
+let userLat = null;
+let userLon = null;
+
+/* === 距離計算（m）=== */
+function distance(lat1, lon1, lat2, lon2){
+  const R = 6371000;
+  const dLat = (lat2-lat1)*Math.PI/180;
+  const dLon = (lon2-lon1)*Math.PI/180;
+  const a =
+    Math.sin(dLat/2)**2 +
+    Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*
+    Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+
+/* === 方位角（rad）=== */
+function bearing(lat1, lon1, lat2, lon2){
+  const y = Math.sin((lon2-lon1)*Math.PI/180) * Math.cos(lat2*Math.PI/180);
+  const x =
+    Math.cos(lat1*Math.PI/180)*Math.sin(lat2*Math.PI/180) -
+    Math.sin(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.cos((lon2-lon1)*Math.PI/180);
+  return Math.atan2(y,x);
+}
+
+async function start(){
+  /* カメラ */
+  const stream = await navigator.mediaDevices.getUserMedia({ video:{facingMode:"environment"} });
+  video.srcObject = stream;
+  await video.play();
+  scene.background = new THREE.VideoTexture(video);
+
+  /* 画像 */
+  const tex = new THREE.TextureLoader().load(IMAGE_URL);
+  plane = new THREE.Mesh(
+    new THREE.PlaneGeometry(1,1),
+    new THREE.MeshBasicMaterial({ map:tex, transparent:true })
+  );
+  scene.add(plane);
+
+  /* GPS */
+  navigator.geolocation.watchPosition(p=>{
+    userLat = p.coords.latitude;
+    userLon = p.coords.longitude;
+  }, console.error, { enableHighAccuracy:true });
+
+  /* 方位 */
+  window.addEventListener("deviceorientationabsolute", e=>{
+    if(e.alpha!=null) heading = THREE.MathUtils.degToRad(e.alpha);
+  });
+}
+
+document.getElementById("btn").onclick = start;
+
+function animate(){
+  requestAnimationFrame(animate);
+  if(!plane || userLat===null) return;
+
+  const d = distance(userLat,userLon,TARGET_LAT,TARGET_LON);
+  const b = bearing(userLat,userLon,TARGET_LAT,TARGET_LON);
+  const rel = b - heading;
+
+  /* 位置（左右＋前方） */
+  plane.position.x = Math.sin(rel) * 3;
+  plane.position.z = -Math.cos(rel) * 3;
+
+  /* 距離で拡大縮小 */
+  const scale = Math.min(Math.max(10/d, 0.5), 4);
+  plane.scale.setScalar(scale);
+
+  info.textContent =
+    `distance=${d.toFixed(1)}m\nscale=${scale.toFixed(2)}\nheading=${THREE.MathUtils.radToDeg(heading).toFixed(1)}`;
+
+  renderer.render(scene,camera);
+}
+animate();
+</script>
+</body>
+</html>
