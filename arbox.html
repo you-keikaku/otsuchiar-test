@@ -20,22 +20,20 @@
     }
     #start button { font-size:18px; padding:14px 18px; border-radius:10px; border:0; }
 
-    /* 重要：AR.js の video を「後ろ」 */
+    /* ここは保険（最終的にはJSで強制する） */
     #arjs-video{
       position:fixed!important; inset:0!important;
       width:100%!important; height:100%!important;
       object-fit:cover!important;
       z-index: 0!important;
+      pointer-events:none;
     }
-
-    /* 重要：A-Frame の canvas を「前」 */
     canvas, .a-canvas, canvas.a-canvas{
       position:fixed!important; inset:0!important;
       width:100%!important; height:100%!important;
-      z-index: 10!important;
+      z-index: 9999!important;
       pointer-events:none;
     }
-
     a-scene{ background: transparent !important; }
   </style>
 </head>
@@ -43,7 +41,7 @@
 <body>
   <div id="start"><button id="btn">Start AR</button></div>
 
-  <!-- ★sceneは最初から置く（作り直さない） -->
+  <!-- sceneは最初から置く（作り直さない） -->
   <a-scene
     id="scene"
     embedded
@@ -62,35 +60,69 @@
   <script>
     const btn = document.getElementById('btn');
     const start = document.getElementById('start');
-    const scene = document.getElementById('scene');
+    const sceneEl = document.getElementById('scene');
 
-    function forceLayers(){
-      const v = document.getElementById('arjs-video');
-      const c = document.querySelector('canvas.a-canvas') || document.querySelector('canvas');
-      if(v){
-        v.style.zIndex = "0";
-        v.style.pointerEvents = "none";
+    let mo = null;
+    let timer = null;
+
+    function hardFixLayersAndSize() {
+      // viewport固定（見切れ対策）
+      const scene = document.querySelector('a-scene');
+      if (scene) {
+        scene.style.position = 'fixed';
+        scene.style.left = '0';
+        scene.style.top = '0';
+        scene.style.width = '100vw';
+        scene.style.height = '100vh';
+        scene.style.zIndex = '10';
+        scene.style.background = 'transparent';
+      }
+
+      // videoを後ろ
+      document.querySelectorAll('video').forEach(v => {
+        v.style.position = 'fixed';
+        v.style.left = '0';
+        v.style.top = '0';
+        v.style.width = '100vw';
+        v.style.height = '100vh';
+        v.style.objectFit = 'cover';
+        v.style.zIndex = '0';
+        v.style.pointerEvents = 'none';
+
         v.muted = true;
-        v.setAttribute("playsinline","");
-        v.setAttribute("webkit-playsinline","");
-      }
-      if(c){
-        c.style.zIndex = "10";
-        c.style.pointerEvents = "none";
-      }
+        v.setAttribute('playsinline', '');
+        v.setAttribute('webkit-playsinline', '');
+      });
+
+      // canvasを前（かつbody末尾へ）
+      document.querySelectorAll('canvas').forEach(c => {
+        c.style.position = 'fixed';
+        c.style.left = '0';
+        c.style.top = '0';
+        c.style.width = '100vw';
+        c.style.height = '100vh';
+        c.style.zIndex = '9999';
+        c.style.pointerEvents = 'none';
+
+        // DOM順を最後へ（スタッキングで負ける時の最後の手）
+        if (c.parentElement) document.body.appendChild(c);
+      });
     }
 
     btn.addEventListener('click', () => {
-      scene.style.display = "block";
+      sceneEl.style.display = "block";
       start.remove();
 
-      // 生成順がブレても必ず直す（Androidでもこれが効く）
-      const mo = new MutationObserver(forceLayers);
-      mo.observe(document.documentElement, { childList:true, subtree:true });
-      setInterval(forceLayers, 250);
-      setTimeout(forceLayers, 1000);
+      // 生成順がブレても勝てるように監視＋定期修正（Start後のみ）
+      mo = new MutationObserver(hardFixLayersAndSize);
+      mo.observe(document.documentElement, { childList: true, subtree: true });
+
+      timer = setInterval(hardFixLayersAndSize, 200);
+      setTimeout(hardFixLayersAndSize, 800);
+
+      window.addEventListener('resize', () => setTimeout(hardFixLayersAndSize, 50));
+      window.addEventListener('orientationchange', () => setTimeout(hardFixLayersAndSize, 200));
     }, { once:true });
   </script>
 </body>
 </html>
-
