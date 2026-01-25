@@ -96,7 +96,7 @@
         log("✅ Camera OK.\nNow loading GLB…\n" + MODEL_URL);
 
         // ★GLTFLoader はここで動的 import（失敗してもカメラは映る）
-        const { GLTFLoader } = await import("https://unpkg.com/three@0.160.1/examples/jsm/loaders/GLTFLoader.js");
+        const { GLTFLoader } = await import("https://unpkg.com/three@0.160.1/examples/jsm/loaders/GLTFLoader.js?module");
         const loader = new GLTFLoader();
 
         loader.load(
