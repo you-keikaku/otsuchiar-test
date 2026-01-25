@@ -13,7 +13,6 @@
     #log {
       position: fixed; top:0; left:0; right:0; z-index: 10;
       color:#0f0; background:rgba(0,0,0,.6); padding:6px 8px; font:12px/1.3 monospace;
-      white-space: pre-wrap;
     }
   </style>
 </head>
@@ -24,37 +23,39 @@
 
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.160.1/build/three.module.js";
-    import { GLTFLoader } from "https://unpkg.com/three@0.160.1/examples/jsm/loaders/GLTFLoader.js";
 
-    // ★ここだけ変更すればOK
-    const MODEL_URL = "T-REX.glb";  // 例: "assets/asset.glb"
-
-    const logEl = document.getElementById('log');
-    const log = (s)=>logEl.textContent = s;
+    const log = (s)=>document.getElementById('log').textContent=s;
 
     const canvas = document.getElementById('c');
     const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     const scene = new THREE.Scene();
 
     const camera = new THREE.PerspectiveCamera(60, 1, 0.01, 100);
     camera.position.set(0, 0, 2);
 
-    // ライト（GLBが暗いとき用に少し強め）
-    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-    const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+    // ライト
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.9);
     dir.position.set(1,2,1);
     scene.add(dir);
 
-    // 背景：カメラ映像（VideoTexture）
+    // 赤い箱（立体）
+    const box = new THREE.Mesh(
+      new THREE.BoxGeometry(0.4, 0.4, 0.4),
+      new THREE.MeshStandardMaterial({ color: 0xE74C3C })
+    );
+    box.position.set(0, 0, 0);
+    scene.add(box);
+
+    // 背景にカメラ映像（video texture）
     const video = document.createElement('video');
     video.playsInline = true;
     video.muted = true;
     video.autoplay = true;
 
-    let model = null;
+    let videoTex = null;
 
     async function startCamera(){
       try{
@@ -66,52 +67,12 @@
         video.srcObject = stream;
         await video.play();
 
-        const videoTex = new THREE.VideoTexture(video);
+        videoTex = new THREE.VideoTexture(video);
         videoTex.colorSpace = THREE.SRGBColorSpace;
         scene.background = videoTex;
 
-        log("✅ Camera OK.\nLoading model: " + MODEL_URL);
-
-        // GLB読み込み
-        const loader = new GLTFLoader();
-        loader.load(
-          MODEL_URL,
-          (gltf) => {
-            model = gltf.scene;
-            scene.add(model);
-
-            // モデルをカメラ前に置く
-            model.position.set(0, -0.3, 0);
-
-            // サイズ自動調整（大きすぎ/小さすぎ対策）
-            const box = new THREE.Box3().setFromObject(model);
-            const size = new THREE.Vector3();
-            box.getSize(size);
-            const maxDim = Math.max(size.x, size.y, size.z) || 1;
-            const scale = 1.0 / maxDim;   // 最大辺が1になるように
-            model.scale.setScalar(scale);
-
-            // ちょっと手前へ
-            model.position.z = 0;
-
-            log("✅ Model loaded.\nsize=" + `${size.x.toFixed(2)}, ${size.y.toFixed(2)}, ${size.z.toFixed(2)}`
-                + "\nscale=" + scale.toFixed(3));
-          },
-          (xhr) => {
-            if (xhr.total) {
-              const p = Math.round((xhr.loaded / xhr.total) * 100);
-              log(`✅ Camera OK.\nLoading model: ${MODEL_URL}\n${p}%`);
-            }
-          },
-          (err) => {
-            console.error(err);
-            log("❌ Model load failed.\n" + MODEL_URL + "\n(see console)");
-            alert("Model load failed. Check path / case / 404.");
-          }
-        );
-
+        log("✅ Camera OK. (VideoTexture)");
       }catch(e){
-        console.error(e);
         log("❌ Camera failed: " + e.name + " / " + e.message);
         alert("Camera failed:\n" + e.name + "\n" + e.message);
       }
@@ -130,7 +91,7 @@
 
     function animate(){
       requestAnimationFrame(animate);
-      if (model) model.rotation.y += 0.01; // 回転（不要なら消してOK）
+      box.rotation.y += 0.01;
       renderer.render(scene, camera);
     }
     animate();
