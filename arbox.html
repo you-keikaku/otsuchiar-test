@@ -3,35 +3,85 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-
-  <!-- A-Frame 1.6.0（AR.js 3.4.7に合わせる） -->
   <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
-
-  <!-- AR.js 3.4.7（固定版）: Marker Tracking 用 -->
   <script src="https://raw.githack.com/AR-js-org/AR.js/3.4.7/aframe/build/aframe-ar.js"></script>
 
   <style>
-    html, body { margin:0; width:100%; height:100%; overflow:hidden; background:transparent; }
-    #arjs-video { position:fixed!important; top:0; left:0; width:100%!important; height:100%!important; object-fit:cover; z-index:0!important; }
-    canvas { position:fixed!important; top:0; left:0; z-index:1!important; }
+    html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#000; }
+    #start {
+      position: fixed; inset: 0;
+      display:flex; align-items:center; justify-content:center;
+      z-index: 99999;
+      background: rgba(0,0,0,0.85);
+      color: #fff;
+      font: 18px/1.4 sans-serif;
+    }
+    #start button{
+      font-size:18px; padding:14px 18px; border-radius:10px; border:0;
+    }
+    /* AR.js が作る video/canvas を見えるように固定 */
+    #arjs-video {
+      position: fixed !important;
+      top: 0; left: 0;
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover;
+      z-index: 0 !important;
+    }
+    canvas {
+      position: fixed !important;
+      top: 0; left: 0;
+      z-index: 1 !important;
+    }
   </style>
 </head>
 
 <body>
-  <a-scene
-    embedded
-    vr-mode-ui="enabled: false"
-    renderer="alpha: true; antialias: true;"
-    arjs="sourceType: webcam; debugUIEnabled: true;"
-    style="position: fixed; top:0; left:0; width:100%; height:100%;"
-  >
-    <a-light type="ambient" intensity="0.5"></a-light>
-    <a-light type="directional" position="1 2 1" intensity="0.9"></a-light>
+  <div id="start">
+    <button id="btn">Start AR（タップして開始）</button>
+  </div>
 
-    <!-- ここで“カメラ映像の上に箱”が出れば、AR.jsカメラ初期化OK -->
-    <a-box position="0 0 -3" rotation="0 35 0" color="#E74C3C"></a-box>
+  <script>
+    document.getElementById('btn').addEventListener('click', async () => {
+      // 1) 先に getUserMedia を「ユーザー操作の文脈」で実行（許可ダイアログを出す）
+      try {
+        await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+      } catch (e) {
+        alert("カメラ取得に失敗: " + e.name + "\n" + e.message);
+        return;
+      }
 
-    <a-camera></a-camera>
-  </a-scene>
+      // 2) a-scene を“このタイミングで”生成（AR.js がカメラ初期化しやすい）
+      const scene = document.createElement('a-scene');
+      scene.setAttribute('embedded', '');
+      scene.setAttribute('vr-mode-ui', 'enabled: false');
+      scene.setAttribute('renderer', 'alpha: true; antialias: true;');
+      scene.setAttribute('arjs', 'sourceType: webcam; debugUIEnabled: true;');
+      scene.setAttribute('style', 'position: fixed; top:0; left:0; width:100%; height:100%;');
+
+      scene.innerHTML = `
+        <a-light type="ambient" intensity="0.5"></a-light>
+        <a-light type="directional" position="1 2 1" intensity="0.9"></a-light>
+        <a-box position="0 0 -3" rotation="0 35 0" color="#E74C3C"></a-box>
+        <a-camera></a-camera>
+      `;
+
+      document.body.appendChild(scene);
+
+      // 3) スタート画面を消す
+      document.getElementById('start').remove();
+
+      // 4) 念のため video.play を促す（端末によっては必要）
+      setTimeout(async () => {
+        const v = document.getElementById('arjs-video');
+        if (v) {
+          v.muted = true;
+          v.setAttribute("playsinline", "");
+          v.setAttribute("webkit-playsinline", "");
+          try { await v.play(); } catch (_) {}
+        }
+      }, 500);
+    }, { once: true });
+  </script>
 </body>
 </html>
