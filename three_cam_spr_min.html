@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Sprite Camera Test</title>
+
+  <!-- three.js 非module版（最も安定） -->
+  <script src="https://unpkg.com/three@0.160.1/build/three.min.js"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: black;
+    }
+    #canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    #start {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.85);
+      z-index: 10;
+    }
+    #start button {
+      font-size: 18px;
+      padding: 14px 18px;
+      border-radius: 10px;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+
+<div id="start">
+  <button id="btn">Start Camera</button>
+</div>
+
+<canvas id="canvas"></canvas>
+
+<script>
+alert("JS ALIVE");   // ← これが出なければHTML参照がおかしい
+
+const IMAGE_URL = "./assets/object01.png";
+
+const canvas = document.getElementById("canvas");
+const renderer = new THREE.WebGLRenderer({
+  canvas: canvas,
+  alpha: true,
+  antialias: true
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+camera.position.set(0, 0, 0);
+
+let video, videoTexture;
+let sprite;
+
+function resize() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", resize);
+resize();
+
+async function startCamera() {
+  alert("START CALLED");
+
+  document.getElementById("start").style.display = "none";
+
+  // カメラ取得
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: "environment",
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    },
+    audio: false
+  });
+
+  video = document.createElement("video");
+  video.playsInline = true;
+  video.muted = true;
+  video.srcObject = stream;
+  await video.play();
+
+  videoTexture = new THREE.VideoTexture(video);
+  scene.background = videoTexture;
+
+  // Sprite画像
+  const texture = new THREE.TextureLoader().load(
+    IMAGE_URL,
+    () => console.log("image loaded"),
+    undefined,
+    () => alert("IMAGE LOAD FAILED")
+  );
+
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true
+  });
+
+  sprite = new THREE.Sprite(material);
+  sprite.scale.set(2, 2, 1);
+  sprite.position.set(0, 0, -3);
+  scene.add(sprite);
+
+  animate();
+}
+
+document.getElementById("btn").addEventListener("click", startCamera);
+
+function animate() {
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+</script>
+
+</body>
+</html>
