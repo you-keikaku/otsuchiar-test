@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>GPS AR Sprite FINAL</title>
+<title>GPS AR Sprite FINAL (Aspect)</title>
 
 <script src="https://unpkg.com/three@0.160.1/build/three.min.js"></script>
 
@@ -16,7 +16,7 @@ html,body{
   background:#000;
 }
 
-/* カメラ映像（最下層） */
+/* カメラ映像（最下層・安定） */
 #cam{
   position:fixed;
   inset:0;
@@ -75,13 +75,13 @@ html,body{
 
 <script>
 /* ===== 設定 ===== */
-const IMAGE_URL = "./assets/object01.png";
+const IMAGE_URL = "./assets/object01.png"; // 例：1024×768
 const TARGET_LAT = 39.696845;
 const TARGET_LON = 141.149665;
 const SHOW_DISTANCE_M = 10;
 
-/* 中央表示サイズ（px） */
-const SPRITE_SIZE_PX = 220;
+/* 表示サイズ基準（横幅px） */
+const BASE_WIDTH_PX = 220;
 
 /* util */
 function deg2rad(d){return d*Math.PI/180;}
@@ -109,12 +109,11 @@ let sprite;
 /* GPS */
 let lat=null, lon=null;
 
-/* ===== resize（ここが最重要） ===== */
+/* ===== resize（超重要） ===== */
 function resize(){
   const w = window.innerWidth;
   const h = window.innerHeight;
 
-  // canvas の実体サイズと CSS サイズを完全一致
   renderer.setPixelRatio(window.devicePixelRatio || 1);
   renderer.setSize(w, h, false);
 
@@ -144,15 +143,30 @@ async function start(){
   });
   document.getElementById("cam").srcObject = stream;
 
-  /* Sprite */
-  const tex = new THREE.TextureLoader().load(IMAGE_URL);
-  sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: tex, transparent:true })
-  );
-  sprite.position.set(0,0,1);              // ★ 常に画面中央
-  sprite.scale.set(SPRITE_SIZE_PX, SPRITE_SIZE_PX, 1);
-  sprite.visible = false;
-  scene.add(sprite);
+  /* Sprite（縦横比保持） */
+  const loader = new THREE.TextureLoader();
+  loader.load(IMAGE_URL, (texture)=>{
+
+    const imgW = texture.image.width;
+    const imgH = texture.image.height;
+    const aspect = imgH / imgW;   // ★ 元画像の縦横比
+
+    const displayW = BASE_WIDTH_PX;
+    const displayH = displayW * aspect;
+
+    sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true
+      })
+    );
+
+    sprite.position.set(0,0,1);                // 画面中央
+    sprite.scale.set(displayW, displayH, 1);   // ★ 比率保持
+    sprite.visible = false;
+
+    scene.add(sprite);
+  });
 
   /* GPS */
   navigator.geolocation.watchPosition(
