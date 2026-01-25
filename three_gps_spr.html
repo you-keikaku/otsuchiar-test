@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>GPS Sprite 10m (CSS Video)</title>
+<title>GPS AR Sprite FINAL</title>
 
 <script src="https://unpkg.com/three@0.160.1/build/three.min.js"></script>
 
@@ -16,24 +16,27 @@ html,body{
   background:#000;
 }
 
-/* ★ カメラ映像は CSS で full cover */
+/* カメラ映像（最下層） */
 #cam{
   position:fixed;
   inset:0;
-  width:100%;
-  height:100%;
-  object-fit:cover;   /* ← これが決定打 */
+  width:100vw;
+  height:100vh;
+  object-fit:cover;
   z-index:0;
 }
 
-/* three.js は透明で上に重ねる */
+/* three.js HUD */
 #canvas{
   position:fixed;
   inset:0;
+  width:100vw;
+  height:100vh;
   z-index:1;
   pointer-events:none;
 }
 
+/* UI */
 #start{
   position:fixed;
   inset:0;
@@ -77,6 +80,9 @@ const TARGET_LAT = 39.696845;
 const TARGET_LON = 141.149665;
 const SHOW_DISTANCE_M = 10;
 
+/* 中央表示サイズ（px） */
+const SPRITE_SIZE_PX = 220;
+
 /* util */
 function deg2rad(d){return d*Math.PI/180;}
 function distM(lat1,lon1,lat2,lon2){
@@ -88,84 +94,92 @@ function distM(lat1,lon1,lat2,lon2){
   return 2*R*Math.asin(Math.sqrt(a));
 }
 
-/* three.js（UI用） */
-const renderer=new THREE.WebGLRenderer({
-  canvas:document.getElementById("canvas"),
-  alpha:true,
-  antialias:true
+/* ===== three.js 初期化 ===== */
+const renderer = new THREE.WebGLRenderer({
+  canvas: document.getElementById("canvas"),
+  alpha: true,
+  antialias: true
 });
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setPixelRatio(window.devicePixelRatio || 1);
 
-const scene=new THREE.Scene();
+const scene = new THREE.Scene();
 let camera;
-
-/* Sprite */
 let sprite;
 
 /* GPS */
 let lat=null, lon=null;
 
-/* resize（画面中央基準） */
+/* ===== resize（ここが最重要） ===== */
 function resize(){
-  const w=innerWidth, h=innerHeight;
-  renderer.setSize(w,h,false);
+  const w = window.innerWidth;
+  const h = window.innerHeight;
 
-  camera=new THREE.OrthographicCamera(
+  // canvas の実体サイズと CSS サイズを完全一致
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  renderer.setSize(w, h, false);
+
+  const canvas = renderer.domElement;
+  canvas.style.width  = "100vw";
+  canvas.style.height = "100vh";
+  canvas.style.left   = "0";
+  canvas.style.top    = "0";
+
+  camera = new THREE.OrthographicCamera(
     -w/2, w/2,
      h/2,-h/2,
-     0,10
+     0, 10
   );
-  camera.position.z=5;
+  camera.position.z = 5;
 }
-window.addEventListener("resize",resize);
+window.addEventListener("resize", resize);
 
-/* start */
+/* ===== start ===== */
 async function start(){
   document.getElementById("start").style.display="none";
 
-  /* カメラ：CSS video */
-  const stream=await navigator.mediaDevices.getUserMedia({
+  /* カメラ（CSS video） */
+  const stream = await navigator.mediaDevices.getUserMedia({
     video:{facingMode:"environment"},
     audio:false
   });
-  const cam=document.getElementById("cam");
-  cam.srcObject=stream;
+  document.getElementById("cam").srcObject = stream;
 
-  /* three.js UI */
-  const tex=new THREE.TextureLoader().load(IMAGE_URL);
-  sprite=new THREE.Sprite(
-    new THREE.SpriteMaterial({map:tex,transparent:true})
+  /* Sprite */
+  const tex = new THREE.TextureLoader().load(IMAGE_URL);
+  sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, transparent:true })
   );
-  sprite.position.set(0,0,1);
-  sprite.scale.set(240,240,1); // px指定
-  sprite.visible=false;
+  sprite.position.set(0,0,1);              // ★ 常に画面中央
+  sprite.scale.set(SPRITE_SIZE_PX, SPRITE_SIZE_PX, 1);
+  sprite.visible = false;
   scene.add(sprite);
 
+  /* GPS */
   navigator.geolocation.watchPosition(
-    p=>{lat=p.coords.latitude;lon=p.coords.longitude;},
-    e=>alert(e.message),
-    {enableHighAccuracy:true}
+    p => { lat=p.coords.latitude; lon=p.coords.longitude; },
+    e => alert(e.message),
+    { enableHighAccuracy:true }
   );
 
   resize();
 }
-document.getElementById("btn").onclick=start;
+document.getElementById("btn").onclick = start;
 
-/* loop */
+/* ===== loop ===== */
 function animate(){
   requestAnimationFrame(animate);
 
   if(sprite && lat!=null){
-    const d=distM(lat,lon,TARGET_LAT,TARGET_LON);
-    sprite.visible=(d<=SHOW_DISTANCE_M);
-    document.getElementById("hud").textContent=
+    const d = distM(lat, lon, TARGET_LAT, TARGET_LON);
+    sprite.visible = (d <= SHOW_DISTANCE_M);
+    document.getElementById("hud").textContent =
 `distance=${d.toFixed(1)}m
 visible=${sprite.visible}`;
   }else{
     document.getElementById("hud").textContent="Camera OK. Waiting GPS…";
   }
 
-  renderer.render(scene,camera);
+  renderer.render(scene, camera);
 }
 animate();
 </script>
