@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>GPS Sprite 10m CENTER</title>
+<title>GPS Sprite 10m CENTER 2D FULL</title>
 
 <script src="https://unpkg.com/three@0.160.1/build/three.min.js"></script>
 
@@ -31,8 +31,6 @@ html,body{
 #start button{
   font-size:18px;
   padding:14px 18px;
-  border-radius:10px;
-  border:none;
 }
 #hud{
   position:fixed;
@@ -40,9 +38,8 @@ html,body{
   z-index:11;
   background:rgba(0,0,0,.6);
   color:#0f0;
-  font:12px/1.35 monospace;
-  padding:6px 8px;
-  white-space:pre;
+  font:12px monospace;
+  padding:6px;
 }
 </style>
 </head>
@@ -63,9 +60,8 @@ const TARGET_LAT = 39.696845;
 const TARGET_LON = 141.149665;
 const SHOW_DISTANCE_M = 10;
 
-/* 表示は完全固定 */
-const FIXED_Z = -2.0;
-const BASE_SPRITE_SIZE = 0.6;
+/* 画面中央固定サイズ（px基準） */
+const SPRITE_PX = 240; // 縦画面で安全。200〜300で調整可
 
 /* util */
 function deg2rad(d){ return d*Math.PI/180; }
@@ -78,52 +74,73 @@ function distM(lat1,lon1,lat2,lon2){
   return 2*R*Math.asin(Math.sqrt(a));
 }
 
-/* three.js */
-const hud = document.getElementById("hud");
-const renderer = new THREE.WebGLRenderer({
-  canvas: document.getElementById("canvas"),
-  alpha: true,
-  antialias: true
+/* renderer */
+const hud=document.getElementById("hud");
+const renderer=new THREE.WebGLRenderer({
+  canvas:document.getElementById("canvas"),
+  alpha:true,
+  antialias:true
 });
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.autoClear = false;
+renderer.autoClear=true;
 
-/* 背景 */
-const bgScene = new THREE.Scene();
-const bgCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
-bgScene.add(bgCam);
+/* ===== 2Dシーン（ピクセル座標系） ===== */
+const scene=new THREE.Scene();
+let camera;
 
-/* 前景 */
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60,1,0.1,100);
-camera.position.set(0,0,0);
+/* 背景・Sprite */
+let video, bgMesh, sprite;
 
-let bgMesh, video, videoTexture, sprite;
+/* GPS */
 let lat=null, lon=null;
 
-/* resize */
-function updateCover(){
-  if(!bgMesh||!video||!video.videoWidth) return;
-  const sa=innerWidth/innerHeight;
-  const va=video.videoWidth/video.videoHeight;
-  let sx=1, sy=1;
-  if(va>sa) sx=va/sa; else sy=sa/va;
-  bgMesh.scale.set(sx,sy,1);
-}
+/* ===== resize ===== */
 function resize(){
-  const w=innerWidth,h=innerHeight;
+  const w=innerWidth;
+  const h=innerHeight;
+
   renderer.setSize(w,h,false);
-  camera.aspect=w/h;
-  camera.updateProjectionMatrix();
+
+  // ★ ピクセル基準のOrthoCamera
+  camera=new THREE.OrthographicCamera(
+    -w/2, w/2,
+     h/2,-h/2,
+     0,10
+  );
+  camera.position.z=5;
+  scene.clear();
+  scene.add(camera);
+
+  if(bgMesh) scene.add(bgMesh);
+  if(sprite) scene.add(sprite);
+
   updateCover();
 }
 window.addEventListener("resize",resize);
+
+/* 背景を画面いっぱいに */
+function updateCover(){
+  if(!bgMesh||!video||!video.videoWidth) return;
+
+  const screenAspect=innerWidth/innerHeight;
+  const videoAspect=video.videoWidth/video.videoHeight;
+
+  let w=innerWidth;
+  let h=innerHeight;
+
+  if(videoAspect>screenAspect){
+    w=h*videoAspect;
+  }else{
+    h=w/videoAspect;
+  }
+  bgMesh.scale.set(w,h,1);
+}
 
 /* start */
 async function start(){
   document.getElementById("start").style.display="none";
 
-  const stream = await navigator.mediaDevices.getUserMedia({
+  const stream=await navigator.mediaDevices.getUserMedia({
     video:{facingMode:"environment"},
     audio:false
   });
@@ -134,25 +151,26 @@ async function start(){
   video.srcObject=stream;
   await video.play();
 
-  videoTexture=new THREE.VideoTexture(video);
+  const videoTex=new THREE.VideoTexture(video);
+
   bgMesh=new THREE.Mesh(
-    new THREE.PlaneGeometry(2,2),
-    new THREE.MeshBasicMaterial({map:videoTexture})
+    new THREE.PlaneGeometry(1,1),
+    new THREE.MeshBasicMaterial({map:videoTex})
   );
-  bgScene.add(bgMesh);
-  updateCover();
+  bgMesh.position.set(0,0,0);
+  scene.add(bgMesh);
 
   const tex=new THREE.TextureLoader().load(IMAGE_URL);
-  const mat=new THREE.SpriteMaterial({
-    map:tex,
-    transparent:true,
-    depthTest:false,
-    depthWrite:false
-  });
+  sprite=new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map:tex,
+      transparent:true
+    })
+  );
 
-  sprite=new THREE.Sprite(mat);
-  sprite.scale.set(BASE_SPRITE_SIZE,BASE_SPRITE_SIZE,1);
-  sprite.renderOrder=999;
+  // ★ 画面中央・px指定
+  sprite.position.set(0,0,1);
+  sprite.scale.set(SPRITE_PX,SPRITE_PX,1);
   sprite.visible=false;
   scene.add(sprite);
 
@@ -170,33 +188,18 @@ document.getElementById("btn").onclick=start;
 function animate(){
   requestAnimationFrame(animate);
 
-  if(!videoTexture){
-    renderer.clear();
-    renderer.render(scene,camera);
-    return;
-  }
-
   if(sprite && lat!=null){
     const d=distM(lat,lon,TARGET_LAT,TARGET_LON);
     sprite.visible = (d<=SHOW_DISTANCE_M);
-
-    /* ★ 常に画面中央に吸着 */
-    sprite.position.set(0,0,FIXED_Z);
-
-    hud.textContent =
+    hud.textContent=
 `distance=${d.toFixed(1)}m
-visible=${sprite.visible}
-position=center`;
+visible=${sprite.visible}`;
   }else{
     hud.textContent="Camera OK. Waiting GPS…";
   }
 
-  renderer.clear();
-  renderer.render(bgScene,bgCam);
-  renderer.clearDepth();
   renderer.render(scene,camera);
 }
-resize();
 animate();
 </script>
 </body>
