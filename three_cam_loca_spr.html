@@ -228,7 +228,7 @@ document.getElementById("btn").onclick = start;
 /* ===== 描画 ===== */
 function animate(){
   requestAnimationFrame(animate);
-
+/*
   if(!sprite || latS===null || userLat===null){
     if(bgMesh) renderer.render(bgScene, bgCam);
     return;
@@ -258,7 +258,23 @@ function animate(){
   renderer.autoClear = false;
   renderer.render(scene, cam);
   renderer.autoClear = true;
+*/
+   // ↓↓↓ ここから「強制表示テスト」を入れる ↓↓↓
+  if(bgMesh){
+    renderer.render(bgScene, bgCam);
+  }
 
+  if(sprite){
+    sprite.position.set(0, 0, -2);
+    sprite.scale.set(2, 2, 1);
+
+    renderer.autoClear = false;
+    renderer.render(scene, cam);
+    renderer.autoClear = true;
+  }
+}
+  // ↑↑↑ここまで「強制表示テスト」↑↑↑
+  
   info.textContent =
 `distance=${d.toFixed(1)}m
 scale=${scale.toFixed(2)}
