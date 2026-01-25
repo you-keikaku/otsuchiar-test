@@ -5,9 +5,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://unpkg.com/ar.js@3.4.5/aframe/build/aframe-ar.js"></script>
+
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent; /* ★白背景を消す */
+    }
+    /* ★AR.jsが生成する動画を「見える位置」に固定 */
+    #arjs-video {
+      position: fixed !important;
+      top: 0; left: 0;
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover;
+      z-index: 0 !important;
+    }
+    /* ★A-Frameのcanvasは動画より前 */
+    canvas {
+      position: fixed !important;
+      top: 0; left: 0;
+      z-index: 1 !important;
+    }
+  </style>
 </head>
 
-<body style="margin:0; overflow:hidden;">
+<body>
   <a-scene
     embedded
     vr-mode-ui="enabled: false"
@@ -22,5 +47,10 @@
 
     <a-camera></a-camera>
   </a-scene>
+
+  <script>
+    // ★「カメラ許可が拒否」などを画面に出す
+    window.addEventListener("error", (e) => alert("JS error: " + e.message));
+  </script>
 </body>
 </html>
