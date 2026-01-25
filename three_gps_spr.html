@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>GPS Sprite 10m CENTER 2D FULL</title>
+<title>GPS Sprite 10m (CSS Video)</title>
 
 <script src="https://unpkg.com/three@0.160.1/build/three.min.js"></script>
 
@@ -15,10 +15,25 @@ html,body{
   overflow:hidden;
   background:#000;
 }
+
+/* ★ カメラ映像は CSS で full cover */
+#cam{
+  position:fixed;
+  inset:0;
+  width:100%;
+  height:100%;
+  object-fit:cover;   /* ← これが決定打 */
+  z-index:0;
+}
+
+/* three.js は透明で上に重ねる */
 #canvas{
   position:fixed;
   inset:0;
+  z-index:1;
+  pointer-events:none;
 }
+
 #start{
   position:fixed;
   inset:0;
@@ -45,13 +60,15 @@ html,body{
 </head>
 
 <body>
+
+<video id="cam" autoplay muted playsinline></video>
+<canvas id="canvas"></canvas>
+
 <div id="hud">waiting…</div>
 
 <div id="start">
   <button id="btn">Start</button>
 </div>
-
-<canvas id="canvas"></canvas>
 
 <script>
 /* ===== 設定 ===== */
@@ -60,11 +77,8 @@ const TARGET_LAT = 39.696845;
 const TARGET_LON = 141.149665;
 const SHOW_DISTANCE_M = 10;
 
-/* 画面中央固定サイズ（px基準） */
-const SPRITE_PX = 240; // 縦画面で安全。200〜300で調整可
-
 /* util */
-function deg2rad(d){ return d*Math.PI/180; }
+function deg2rad(d){return d*Math.PI/180;}
 function distM(lat1,lon1,lat2,lon2){
   const R=6371000;
   const dLat=deg2rad(lat2-lat1);
@@ -74,103 +88,56 @@ function distM(lat1,lon1,lat2,lon2){
   return 2*R*Math.asin(Math.sqrt(a));
 }
 
-/* renderer */
-const hud=document.getElementById("hud");
+/* three.js（UI用） */
 const renderer=new THREE.WebGLRenderer({
   canvas:document.getElementById("canvas"),
   alpha:true,
   antialias:true
 });
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-renderer.autoClear=true;
 
-/* ===== 2Dシーン（ピクセル座標系） ===== */
 const scene=new THREE.Scene();
 let camera;
 
-/* 背景・Sprite */
-let video, bgMesh, sprite;
+/* Sprite */
+let sprite;
 
 /* GPS */
 let lat=null, lon=null;
 
-/* ===== resize ===== */
+/* resize（画面中央基準） */
 function resize(){
-  const w=innerWidth;
-  const h=innerHeight;
-
+  const w=innerWidth, h=innerHeight;
   renderer.setSize(w,h,false);
 
-  // ★ ピクセル基準のOrthoCamera
   camera=new THREE.OrthographicCamera(
     -w/2, w/2,
      h/2,-h/2,
      0,10
   );
   camera.position.z=5;
-  scene.clear();
-  scene.add(camera);
-
-  if(bgMesh) scene.add(bgMesh);
-  if(sprite) scene.add(sprite);
-
-  updateCover();
 }
 window.addEventListener("resize",resize);
-
-/* 背景を画面いっぱいに */
-function updateCover(){
-  if(!bgMesh||!video||!video.videoWidth) return;
-
-  const screenAspect=innerWidth/innerHeight;
-  const videoAspect=video.videoWidth/video.videoHeight;
-
-  let w=innerWidth;
-  let h=innerHeight;
-
-  if(videoAspect>screenAspect){
-    w=h*videoAspect;
-  }else{
-    h=w/videoAspect;
-  }
-  bgMesh.scale.set(w,h,1);
-}
 
 /* start */
 async function start(){
   document.getElementById("start").style.display="none";
 
+  /* カメラ：CSS video */
   const stream=await navigator.mediaDevices.getUserMedia({
     video:{facingMode:"environment"},
     audio:false
   });
+  const cam=document.getElementById("cam");
+  cam.srcObject=stream;
 
-  video=document.createElement("video");
-  video.playsInline=true;
-  video.muted=true;
-  video.srcObject=stream;
-  await video.play();
-
-  const videoTex=new THREE.VideoTexture(video);
-
-  bgMesh=new THREE.Mesh(
-    new THREE.PlaneGeometry(1,1),
-    new THREE.MeshBasicMaterial({map:videoTex})
-  );
-  bgMesh.position.set(0,0,0);
-  scene.add(bgMesh);
-
+  /* three.js UI */
   const tex=new THREE.TextureLoader().load(IMAGE_URL);
   sprite=new THREE.Sprite(
-    new THREE.SpriteMaterial({
-      map:tex,
-      transparent:true
-    })
+    new THREE.SpriteMaterial({map:tex,transparent:true})
   );
-
-  // ★ 画面中央・px指定
   sprite.position.set(0,0,1);
-  sprite.scale.set(SPRITE_PX,SPRITE_PX,1);
+  sprite.scale.set(240,240,1); // px指定
   sprite.visible=false;
   scene.add(sprite);
 
@@ -190,17 +157,18 @@ function animate(){
 
   if(sprite && lat!=null){
     const d=distM(lat,lon,TARGET_LAT,TARGET_LON);
-    sprite.visible = (d<=SHOW_DISTANCE_M);
-    hud.textContent=
+    sprite.visible=(d<=SHOW_DISTANCE_M);
+    document.getElementById("hud").textContent=
 `distance=${d.toFixed(1)}m
 visible=${sprite.visible}`;
   }else{
-    hud.textContent="Camera OK. Waiting GPS…";
+    document.getElementById("hud").textContent="Camera OK. Waiting GPS…";
   }
 
   renderer.render(scene,camera);
 }
 animate();
 </script>
+
 </body>
 </html>
