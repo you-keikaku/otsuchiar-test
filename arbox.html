@@ -7,33 +7,39 @@
   <script src="https://raw.githack.com/AR-js-org/AR.js/3.4.7/aframe/build/aframe-ar.js"></script>
 
   <style>
-    html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#000; }
-    #start {
-      position: fixed; inset: 0;
-      display:flex; align-items:center; justify-content:center;
-      z-index: 99999;
-      background: rgba(0,0,0,0.85);
-      color: #fff;
-      font: 18px/1.4 sans-serif;
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
     }
-    #start button{
-      font-size:18px; padding:14px 18px; border-radius:10px; border:0;
-    }
-    /* AR.js が作る video/canvas を見えるように固定 */
+  
+    /* AR.js が作るカメラ映像（後ろ） */
     #arjs-video {
       position: fixed !important;
-      top: 0; left: 0;
+      inset: 0 !important;
       width: 100% !important;
       height: 100% !important;
-      object-fit: cover;
+      object-fit: cover !important;
       z-index: 0 !important;
     }
-    canvas {
+  
+    /* A-Frame の描画（前） */
+    .a-canvas,
+    canvas.a-canvas {
       position: fixed !important;
-      top: 0; left: 0;
-      z-index: 1 !important;
+      inset: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      z-index: 10 !important;
+      pointer-events: none;
     }
-  </style>
+  
+    a-scene {
+      background: transparent !important;
+    }
+</style>
 </head>
 
 <body>
@@ -85,3 +91,4 @@
   </script>
 </body>
 </html>
+
