@@ -3,10 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>GPS Sprite Portrait Safe</title>
 
-  <title>GPS Sprite Stable</title>
-
-  <!-- 安定版 three.js（非module） -->
   <script src="https://unpkg.com/three@0.160.1/build/three.min.js"></script>
 
   <style>
@@ -67,29 +65,27 @@
 
 const IMAGE_URL = "./assets/object01.png";
 
-/* 目的地（必要に応じて変更） */
+/* 目的地 */
 const TARGET_LAT = 39.696845;
 const TARGET_LON = 141.149665;
 
-/* 表示位置（前後固定） */
-const FIXED_Z = -2.2;          // 常にカメラ前 2.2m
-const SIDE_RANGE = 1.4;        // 左右の最大移動幅（m）
+/* 表示位置 */
+const FIXED_Z = -2.5;      // 常にカメラ前
+const SIDE_RANGE = 1.2;    // 左右のみ
 
-/* サイズ制御 */
-const BASE_SPRITE_SIZE = 0.8;  // 基準サイズ（画面内優先）
-const BASE_DISTANCE_M = 50;    // 50mで scale=1
+/* 距離→サイズ（控えめ） */
+const BASE_DISTANCE_M = 60;
 const SCALE_MIN = 0.7;
-const SCALE_MAX = 1.5;
+const SCALE_MAX = 1.3;
 
-/* 平滑化（安定重視） */
+/* 安定化 */
 const ALPHA_GPS  = 0.05;
 const ALPHA_HEAD = 0.05;
 const ALPHA_POS  = 0.08;
 
 /* ========= ユーティリティ ========= */
-
 function clamp(v,a,b){ return Math.min(Math.max(v,a),b); }
-function lerp(a,b,t){ return a + (b-a)*t; }
+function lerp(a,b,t){ return a+(b-a)*t; }
 function wrapPi(r){
   r = (r + Math.PI) % (2*Math.PI);
   if(r < 0) r += 2*Math.PI;
@@ -109,31 +105,28 @@ function distM(lat1, lon1, lat2, lon2){
   return 2*R*Math.asin(Math.sqrt(a));
 }
 function bearingRad(lat1, lon1, lat2, lon2){
-  const y = Math.sin(deg2rad(lon2-lon1)) * Math.cos(deg2rad(lat2));
+  const y = Math.sin(deg2rad(lon2-lon1))*Math.cos(deg2rad(lat2));
   const x =
     Math.cos(deg2rad(lat1))*Math.sin(deg2rad(lat2)) -
     Math.sin(deg2rad(lat1))*Math.cos(deg2rad(lat2))*Math.cos(deg2rad(lon2-lon1));
-  return Math.atan2(y, x);
+  return Math.atan2(y,x);
 }
 
-/* ========= three.js 基本 ========= */
+/* ========= three.js ========= */
 
 const hud = document.getElementById("hud");
 const canvas = document.getElementById("canvas");
-const renderer = new THREE.WebGLRenderer({
-  canvas,
-  alpha: true,
-  antialias: true
-});
+
+const renderer = new THREE.WebGLRenderer({ canvas, alpha:true, antialias:true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-/* 背景（カメラ） */
+/* 背景 */
 const bgScene = new THREE.Scene();
 const bgCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
 bgScene.add(bgCam);
 let bgMesh = null;
 
-/* 前景（Sprite） */
+/* 前景 */
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
 camera.position.set(0,0,0);
@@ -142,19 +135,39 @@ let sprite = null;
 let video = null;
 let videoTexture = null;
 
-/* GPS / heading */
-let lat = null, lon = null;
-let latS = null, lonS = null;
+/* センサー */
+let lat=null, lon=null, latS=null, lonS=null;
 let headingS = 0;
-
-/* 表示位置平滑化 */
 let xS = 0;
 
-/* ========= リサイズ ========= */
+/* ========= サイズ計算（核心） ========= */
+function getBaseSpriteSize(){
+  const aspect = window.innerWidth / window.innerHeight;
 
+  // 縦画面ほど小さく、横画面ほど少し大きく
+  if(aspect < 0.75) return 0.55;     // 縦持ち（安全サイズ）
+  if(aspect < 1.0)  return 0.65;
+  if(aspect < 1.5)  return 0.75;
+  return 0.85;                       // 横持ち
+}
+
+/* ========= 背景 cover ========= */
+function updateCover(){
+  if(!bgMesh || !video || !video.videoWidth) return;
+
+  const sa = innerWidth / innerHeight;
+  const va = video.videoWidth / video.videoHeight;
+
+  let sx=1, sy=1;
+  if(va > sa) sx = va/sa;
+  else sy = sa/va;
+
+  bgMesh.scale.set(sx, sy, 1);
+}
+
+/* ========= resize ========= */
 function resize(){
-  const w = innerWidth;
-  const h = innerHeight;
+  const w = innerWidth, h = innerHeight;
   renderer.setSize(w,h,false);
   camera.aspect = w/h;
   camera.updateProjectionMatrix();
@@ -162,34 +175,14 @@ function resize(){
 }
 window.addEventListener("resize", resize);
 
-/* ========= 背景 cover 表示 ========= */
-
-function updateCover(){
-  if(!bgMesh || !video || !video.videoWidth) return;
-
-  const screenAspect = innerWidth / innerHeight;
-  const videoAspect  = video.videoWidth / video.videoHeight;
-
-  let sx = 1, sy = 1;
-  if(videoAspect > screenAspect){
-    sx = videoAspect / screenAspect;
-  }else{
-    sy = screenAspect / videoAspect;
-  }
-  bgMesh.scale.set(sx, sy, 1);
-}
-
-/* ========= Start ========= */
-
+/* ========= start ========= */
 async function startAll(){
   document.getElementById("start").style.display = "none";
 
   try{
-    hud.textContent = "Requesting camera…";
-
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode:"environment", width:{ideal:1280}, height:{ideal:720} },
-      audio: false
+      video:{ facingMode:"environment", width:{ideal:1280}, height:{ideal:720} },
+      audio:false
     });
 
     video = document.createElement("video");
@@ -199,7 +192,6 @@ async function startAll(){
     await video.play();
 
     videoTexture = new THREE.VideoTexture(video);
-
     bgMesh = new THREE.Mesh(
       new THREE.PlaneGeometry(2,2),
       new THREE.MeshBasicMaterial({ map: videoTexture })
@@ -207,94 +199,77 @@ async function startAll(){
     bgScene.add(bgMesh);
     updateCover();
 
-    /* Sprite */
     const tex = new THREE.TextureLoader().load(IMAGE_URL);
     const mat = new THREE.SpriteMaterial({ map: tex, transparent:true });
     sprite = new THREE.Sprite(mat);
-    sprite.scale.set(BASE_SPRITE_SIZE, BASE_SPRITE_SIZE, 1);
-    sprite.position.set(0, 0, FIXED_Z);
     scene.add(sprite);
 
-    /* GPS */
-    hud.textContent = "Waiting GPS…";
     navigator.geolocation.watchPosition(
-      (p)=>{
-        lat = p.coords.latitude;
-        lon = p.coords.longitude;
-        if(latS === null){ latS = lat; lonS = lon; }
+      p=>{
+        lat=p.coords.latitude; lon=p.coords.longitude;
+        if(latS===null){ latS=lat; lonS=lon; }
       },
-      (e)=>alert("GPS ERROR: "+e.message),
-      { enableHighAccuracy:true, maximumAge:0 }
+      e=>alert("GPS ERROR: "+e.message),
+      { enableHighAccuracy:true }
     );
 
-    /* 方位 */
-    window.addEventListener("deviceorientationabsolute",(e)=>{
-      if(e.alpha != null){
-        const h = deg2rad(e.alpha);
-        headingS = headingS + wrapPi(h - headingS) * ALPHA_HEAD;
-      }
-    });
-    window.addEventListener("deviceorientation",(e)=>{
-      if(e.alpha != null && headingS === 0){
-        const h = deg2rad(e.alpha);
-        headingS = headingS + wrapPi(h - headingS) * ALPHA_HEAD;
+    window.addEventListener("deviceorientationabsolute",e=>{
+      if(e.alpha!=null){
+        const h=deg2rad(e.alpha);
+        headingS += wrapPi(h-headingS)*ALPHA_HEAD;
       }
     });
 
-  }catch(err){
-    alert("START ERROR: "+err.message);
+  }catch(e){
+    alert(e.message);
   }
 }
 
-document.getElementById("btn").addEventListener("click", startAll);
+document.getElementById("btn").onclick=startAll;
 
-/* ========= ループ ========= */
-
+/* ========= loop ========= */
 function animate(){
   requestAnimationFrame(animate);
 
   if(!videoTexture){
-    renderer.render(scene, camera);
+    renderer.render(scene,camera);
     return;
   }
 
-  if(!sprite || latS === null || lat === null){
-    renderer.render(bgScene, bgCam);
-    renderer.autoClear = false;
-    renderer.render(scene, camera);
-    renderer.autoClear = true;
+  renderer.render(bgScene,bgCam);
+
+  if(!sprite || latS===null || lat===null){
+    renderer.autoClear=false;
+    renderer.render(scene,camera);
+    renderer.autoClear=true;
     return;
   }
 
-  /* GPS 平滑化 */
-  latS = lerp(latS, lat, ALPHA_GPS);
-  lonS = lerp(lonS, lon, ALPHA_GPS);
+  latS=lerp(latS,lat,ALPHA_GPS);
+  lonS=lerp(lonS,lon,ALPHA_GPS);
 
-  const d = distM(latS, lonS, TARGET_LAT, TARGET_LON);
-  const b = bearingRad(latS, lonS, TARGET_LAT, TARGET_LON);
-  const rel = wrapPi(b - headingS);
+  const d=distM(latS,lonS,TARGET_LAT,TARGET_LON);
+  const b=bearingRad(latS,lonS,TARGET_LAT,TARGET_LON);
+  const rel=wrapPi(b-headingS);
 
-  /* 左右のみ移動（消えない） */
-  const x = Math.sin(rel) * SIDE_RANGE;
-  xS = lerp(xS, x, ALPHA_POS);
-  sprite.position.set(xS, 0, FIXED_Z);
+  const x=Math.sin(rel)*SIDE_RANGE;
+  xS=lerp(xS,x,ALPHA_POS);
 
-  /* サイズ制御（画面内優先） */
-  const scale = clamp(BASE_DISTANCE_M / Math.max(d,1), SCALE_MIN, SCALE_MAX);
-  sprite.scale.set(
-    BASE_SPRITE_SIZE * scale,
-    BASE_SPRITE_SIZE * scale,
-    1
-  );
+  sprite.position.set(xS,0,FIXED_Z);
 
-  hud.textContent =
-`dist=${d.toFixed(1)}m  scale=${scale.toFixed(2)}
-rel=${rad2deg(rel).toFixed(1)}deg`;
+  const base=getBaseSpriteSize();
+  const scale=clamp(BASE_DISTANCE_M/Math.max(d,1),SCALE_MIN,SCALE_MAX);
 
-  renderer.render(bgScene, bgCam);
-  renderer.autoClear = false;
-  renderer.render(scene, camera);
-  renderer.autoClear = true;
+  sprite.scale.set(base*scale,base*scale,1);
+
+  hud.textContent=
+`dist=${d.toFixed(1)}m
+base=${base.toFixed(2)} scale=${scale.toFixed(2)}
+aspect=${(innerWidth/innerHeight).toFixed(2)}`;
+
+  renderer.autoClear=false;
+  renderer.render(scene,camera);
+  renderer.autoClear=true;
 }
 
 resize();
