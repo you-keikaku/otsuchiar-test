@@ -3,92 +3,93 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+
   <script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>
   <script src="https://raw.githack.com/AR-js-org/AR.js/3.4.7/aframe/build/aframe-ar.js"></script>
 
   <style>
-    html, body {
-      margin: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: transparent;
+    html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#000; }
+
+    /* Start overlay */
+    #start {
+      position: fixed; inset: 0;
+      display:flex; align-items:center; justify-content:center;
+      background: rgba(0,0,0,0.85);
+      z-index: 99999;
+      color:#fff; font: 18px/1.4 sans-serif;
     }
-  
-    /* AR.js が作るカメラ映像（後ろ） */
-    #arjs-video {
-      position: fixed !important;
-      inset: 0 !important;
-      width: 100% !important;
-      height: 100% !important;
-      object-fit: cover !important;
-      z-index: 0 !important;
+    #start button { font-size:18px; padding:14px 18px; border-radius:10px; border:0; }
+
+    /* 重要：AR.js の video を「後ろ」 */
+    #arjs-video{
+      position:fixed!important; inset:0!important;
+      width:100%!important; height:100%!important;
+      object-fit:cover!important;
+      z-index: 0!important;
     }
-  
-    /* A-Frame の描画（前） */
-    .a-canvas,
-    canvas.a-canvas {
-      position: fixed !important;
-      inset: 0 !important;
-      width: 100% !important;
-      height: 100% !important;
-      z-index: 10 !important;
-      pointer-events: none;
+
+    /* 重要：A-Frame の canvas を「前」 */
+    canvas, .a-canvas, canvas.a-canvas{
+      position:fixed!important; inset:0!important;
+      width:100%!important; height:100%!important;
+      z-index: 10!important;
+      pointer-events:none;
     }
-  
-    a-scene {
-      background: transparent !important;
-    }
-</style>
+
+    a-scene{ background: transparent !important; }
+  </style>
 </head>
 
 <body>
-  <div id="start">
-    <button id="btn">Start AR（タップして開始）</button>
-  </div>
+  <div id="start"><button id="btn">Start AR</button></div>
+
+  <!-- ★sceneは最初から置く（作り直さない） -->
+  <a-scene
+    id="scene"
+    embedded
+    vr-mode-ui="enabled:false"
+    renderer="alpha:true; antialias:true"
+    arjs="sourceType: webcam; debugUIEnabled: true;"
+    style="position:fixed; inset:0; width:100%; height:100%; display:none;"
+  >
+    <a-light type="ambient" intensity="0.5"></a-light>
+    <a-light type="directional" position="1 2 1" intensity="0.9"></a-light>
+
+    <a-box position="0 0 -3" rotation="0 35 0" color="#E74C3C"></a-box>
+    <a-camera></a-camera>
+  </a-scene>
 
   <script>
-    document.getElementById('btn').addEventListener('click', async () => {
-      // 1) 先に getUserMedia を「ユーザー操作の文脈」で実行（許可ダイアログを出す）
-      try {
-        await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-      } catch (e) {
-        alert("カメラ取得に失敗: " + e.name + "\n" + e.message);
-        return;
+    const btn = document.getElementById('btn');
+    const start = document.getElementById('start');
+    const scene = document.getElementById('scene');
+
+    function forceLayers(){
+      const v = document.getElementById('arjs-video');
+      const c = document.querySelector('canvas.a-canvas') || document.querySelector('canvas');
+      if(v){
+        v.style.zIndex = "0";
+        v.style.pointerEvents = "none";
+        v.muted = true;
+        v.setAttribute("playsinline","");
+        v.setAttribute("webkit-playsinline","");
       }
+      if(c){
+        c.style.zIndex = "10";
+        c.style.pointerEvents = "none";
+      }
+    }
 
-      // 2) a-scene を“このタイミングで”生成（AR.js がカメラ初期化しやすい）
-      const scene = document.createElement('a-scene');
-      scene.setAttribute('embedded', '');
-      scene.setAttribute('vr-mode-ui', 'enabled: false');
-      scene.setAttribute('renderer', 'alpha: true; antialias: true;');
-      scene.setAttribute('arjs', 'sourceType: webcam; debugUIEnabled: true;');
-      scene.setAttribute('style', 'position: fixed; top:0; left:0; width:100%; height:100%;');
+    btn.addEventListener('click', () => {
+      scene.style.display = "block";
+      start.remove();
 
-      scene.innerHTML = `
-        <a-light type="ambient" intensity="0.5"></a-light>
-        <a-light type="directional" position="1 2 1" intensity="0.9"></a-light>
-        <a-box position="0 0 -3" rotation="0 35 0" color="#E74C3C"></a-box>
-        <a-camera></a-camera>
-      `;
-
-      document.body.appendChild(scene);
-
-      // 3) スタート画面を消す
-      document.getElementById('start').remove();
-
-      // 4) 念のため video.play を促す（端末によっては必要）
-      setTimeout(async () => {
-        const v = document.getElementById('arjs-video');
-        if (v) {
-          v.muted = true;
-          v.setAttribute("playsinline", "");
-          v.setAttribute("webkit-playsinline", "");
-          try { await v.play(); } catch (_) {}
-        }
-      }, 500);
-    }, { once: true });
+      // 生成順がブレても必ず直す（Androidでもこれが効く）
+      const mo = new MutationObserver(forceLayers);
+      mo.observe(document.documentElement, { childList:true, subtree:true });
+      setInterval(forceLayers, 250);
+      setTimeout(forceLayers, 1000);
+    }, { once:true });
   </script>
 </body>
 </html>
-
