@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>GPS Sprite 10m ONLY</title>
+<title>GPS Sprite 10m ONLY (Front)</title>
 
 <script src="https://unpkg.com/three@0.160.1/build/three.min.js"></script>
 
@@ -31,6 +31,8 @@ html,body{
 #start button{
   font-size:18px;
   padding:14px 18px;
+  border-radius:10px;
+  border:none;
 }
 #hud{
   position:fixed;
@@ -38,8 +40,9 @@ html,body{
   z-index:11;
   background:rgba(0,0,0,.6);
   color:#0f0;
-  font:12px monospace;
-  padding:6px;
+  font:12px/1.35 monospace;
+  padding:6px 8px;
+  white-space:pre;
 }
 </style>
 </head>
@@ -55,19 +58,18 @@ html,body{
 
 <script>
 /* ===== 設定（ここだけ触ればOK） ===== */
-
 const IMAGE_URL = "./assets/object01.png";
 
 /* 目的地 */
 const TARGET_LAT = 39.696845;
 const TARGET_LON = 141.149665;
 
-/* 表示条件 */
-const SHOW_DISTANCE_M = 10;   // ★ 10m以内で表示
+/* 10m以内で表示 */
+const SHOW_DISTANCE_M = 10;
 
-/* 表示位置・サイズ（固定） */
-const FIXED_Z = -2.0;         // 常にカメラ正面
-const BASE_SPRITE_SIZE = 0.6; // 縦画面で必ず収まる安全サイズ
+/* 表示（固定） */
+const FIXED_Z = -2.0;          // 正面 2m
+const BASE_SPRITE_SIZE = 0.6;  // 縦画面でも見切れにくい安全サイズ
 
 /* ===== util ===== */
 function deg2rad(d){ return d*Math.PI/180; }
@@ -81,130 +83,150 @@ function distM(lat1,lon1,lat2,lon2){
 }
 
 /* ===== three.js ===== */
-
-const hud=document.getElementById("hud");
-const renderer=new THREE.WebGLRenderer({
-  canvas:document.getElementById("canvas"),
-  alpha:true, antialias:true
+const hud = document.getElementById("hud");
+const renderer = new THREE.WebGLRenderer({
+  canvas: document.getElementById("canvas"),
+  alpha: true,
+  antialias: true
 });
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+// ここ重要：手動で clear/clearDepth するので autoClear を明示
+renderer.autoClear = false;
 
 /* 背景（カメラ） */
-const bgScene=new THREE.Scene();
-const bgCam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+const bgScene = new THREE.Scene();
+const bgCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
 bgScene.add(bgCam);
+let bgMesh = null;
 
-/* 前景 */
-const scene=new THREE.Scene();
-const camera=new THREE.PerspectiveCamera(60,1,0.1,100);
+/* 前景（スプライト） */
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
 camera.position.set(0,0,0);
 
-let bgMesh, video, videoTexture, sprite;
+let video = null;
+let videoTexture = null;
+let sprite = null;
 
 /* GPS */
-let lat=null, lon=null;
+let lat = null;
+let lon = null;
 
 /* ===== resize ===== */
+function updateCover(){
+  if(!bgMesh || !video || !video.videoWidth) return;
+  const sa = innerWidth/innerHeight;
+  const va = video.videoWidth/video.videoHeight;
+  let sx=1, sy=1;
+  if(va>sa) sx = va/sa;
+  else sy = sa/va;
+  bgMesh.scale.set(sx, sy, 1);
+}
+
 function resize(){
   const w=innerWidth, h=innerHeight;
   renderer.setSize(w,h,false);
-  camera.aspect=w/h;
+  camera.aspect = w/h;
   camera.updateProjectionMatrix();
   updateCover();
 }
-window.addEventListener("resize",resize);
-
-/* 背景 cover */
-function updateCover(){
-  if(!bgMesh||!video||!video.videoWidth) return;
-  const sa=innerWidth/innerHeight;
-  const va=video.videoWidth/video.videoHeight;
-  let sx=1, sy=1;
-  if(va>sa) sx=va/sa;
-  else sy=sa/va;
-  bgMesh.scale.set(sx,sy,1);
-}
+window.addEventListener("resize", resize);
 
 /* ===== start ===== */
 async function start(){
   document.getElementById("start").style.display="none";
 
-  /* カメラ */
-  const stream=await navigator.mediaDevices.getUserMedia({
-    video:{facingMode:"environment"},
-    audio:false
-  });
+  try{
+    // カメラ
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode:"environment", width:{ideal:1280}, height:{ideal:720} },
+      audio: false
+    });
 
-  video=document.createElement("video");
-  video.playsInline=true;
-  video.muted=true;
-  video.srcObject=stream;
-  await video.play();
+    video = document.createElement("video");
+    video.playsInline = true;
+    video.muted = true;
+    video.srcObject = stream;
+    await video.play();
 
-  videoTexture=new THREE.VideoTexture(video);
-  bgMesh=new THREE.Mesh(
-    new THREE.PlaneGeometry(2,2),
-    new THREE.MeshBasicMaterial({map:videoTexture})
-  );
-  bgScene.add(bgMesh);
-  updateCover();
+    videoTexture = new THREE.VideoTexture(video);
 
-  /* Sprite（固定サイズ・正面） */
-  const tex=new THREE.TextureLoader().load(IMAGE_URL);
-  sprite=new THREE.Sprite(
-    new THREE.SpriteMaterial({map:tex,transparent:true})
-  );
-  sprite.position.set(0,0,FIXED_Z);
-  sprite.scale.set(BASE_SPRITE_SIZE,BASE_SPRITE_SIZE,1);
-  sprite.visible=false; // ★ 初期は非表示
-  scene.add(sprite);
+    // 背景板（cover表示）
+    bgMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(2,2),
+      new THREE.MeshBasicMaterial({ map: videoTexture })
+    );
+    bgScene.add(bgMesh);
+    updateCover();
 
-  /* GPS */
-  navigator.geolocation.watchPosition(
-    p=>{
-      lat=p.coords.latitude;
-      lon=p.coords.longitude;
-    },
-    e=>alert("GPS ERROR: "+e.message),
-    { enableHighAccuracy:true }
-  );
+    // Sprite（必ず前面に出す設定）
+    const tex = new THREE.TextureLoader().load(
+      IMAGE_URL,
+      ()=>{}, undefined,
+      ()=>alert("IMAGE LOAD FAILED: " + IMAGE_URL)
+    );
+
+    const mat = new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      depthTest: false,   // ★これが重要：深度テストに負けない
+      depthWrite: false
+    });
+
+    sprite = new THREE.Sprite(mat);
+    sprite.position.set(0, 0, FIXED_Z);
+    sprite.scale.set(BASE_SPRITE_SIZE, BASE_SPRITE_SIZE, 1);
+    sprite.visible = false;
+    sprite.renderOrder = 999;   // ★これも重要：最前面扱い
+
+    scene.add(sprite);
+
+    // GPS
+    navigator.geolocation.watchPosition(
+      p => { lat = p.coords.latitude; lon = p.coords.longitude; },
+      e => alert("GPS ERROR: " + e.message),
+      { enableHighAccuracy:true, maximumAge:0, timeout:20000 }
+    );
+
+    resize();
+  }catch(e){
+    alert("START ERROR: " + e.name + "\n" + e.message);
+  }
 }
-document.getElementById("btn").onclick=start;
+document.getElementById("btn").onclick = start;
 
 /* ===== loop ===== */
 function animate(){
   requestAnimationFrame(animate);
 
+  // カメラ起動前は何も描けないので黒のまま
   if(!videoTexture){
-    renderer.render(scene,camera);
+    renderer.clear();
+    renderer.render(scene, camera);
     return;
   }
 
-  renderer.render(bgScene,bgCam);
-
-  if(!sprite || lat===null){
-    renderer.autoClear=false;
-    renderer.render(scene,camera);
-    renderer.autoClear=true;
-    return;
-  }
-
-  const d=distM(lat,lon,TARGET_LAT,TARGET_LON);
-
-  /* ★ 出る／出ない だけ */
-  sprite.visible = (d <= SHOW_DISTANCE_M);
-
-  hud.textContent =
+  // 表示判定
+  if(sprite && lat!=null && lon!=null){
+    const d = distM(lat, lon, TARGET_LAT, TARGET_LON);
+    sprite.visible = (d <= SHOW_DISTANCE_M);
+    hud.textContent =
 `distance=${d.toFixed(1)}m
-visible=${sprite.visible}`;
+visible=${sprite.visible}
+note=10m以内で表示（固定サイズ）`;
+  } else {
+    hud.textContent = "Camera OK. Waiting GPS…";
+  }
 
-  renderer.autoClear=false;
-  renderer.render(scene,camera);
-  renderer.autoClear=true;
+  // ★描画順を固定（これが“裏に隠れる”対策の本丸）
+  renderer.clear();                 // color+depth をクリア
+  renderer.render(bgScene, bgCam);  // 背景
+  renderer.clearDepth();            // ★深度だけ再クリア
+  renderer.render(scene, camera);   // 前景（必ず手前）
 }
-
 resize();
 animate();
 </script>
+
 </body>
 </html>
