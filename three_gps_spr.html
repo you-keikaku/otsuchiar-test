@@ -3,25 +3,52 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-  <title>GPS Sprite Test</title>
 
-  <!-- 安定版：three.js 非module -->
+  <title>GPS Sprite Stable</title>
+
+  <!-- 安定版 three.js（非module） -->
   <script src="https://unpkg.com/three@0.160.1/build/three.min.js"></script>
 
   <style>
-    html, body { margin:0; width:100%; height:100%; overflow:hidden; background:#000; }
-    #canvas { position:fixed; inset:0; width:100%; height:100%; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    #canvas {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
     #start {
-      position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
-      background:rgba(0,0,0,.85); z-index:10;
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.85);
+      z-index: 10;
     }
     #start button {
-      font-size:18px; padding:14px 18px; border-radius:10px; border:0;
+      font-size: 18px;
+      padding: 14px 18px;
+      border-radius: 10px;
+      border: none;
     }
     #hud {
-      position:fixed; top:0; left:0; right:0; z-index:11;
-      background:rgba(0,0,0,.6); color:#0f0; padding:6px 8px;
-      font:12px/1.35 monospace; white-space:pre;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 11;
+      background: rgba(0,0,0,0.6);
+      color: #0f0;
+      font: 12px/1.35 monospace;
+      padding: 6px 8px;
+      white-space: pre;
     }
   </style>
 </head>
@@ -36,27 +63,31 @@
 <canvas id="canvas"></canvas>
 
 <script>
-/* ====== 設定 ====== */
+/* ========= 設定 ========= */
+
 const IMAGE_URL = "./assets/object01.png";
 
-/* 目的地（ここを書き換える） */
+/* 目的地（必要に応じて変更） */
 const TARGET_LAT = 39.696845;
 const TARGET_LON = 141.149665;
 
-/* 表示の基準距離（m）と拡大の強さ */
-const BASE_DISTANCE_M = 30;      // 30mで scale がだいたい 1 になる
-const SCALE_MIN = 0.7;           // 最小
-const SCALE_MAX = 6.0;           // 最大（大きく見せたいので上げ気味）
+/* 表示位置（前後固定） */
+const FIXED_Z = -2.2;          // 常にカメラ前 2.2m
+const SIDE_RANGE = 1.4;        // 左右の最大移動幅（m）
 
-/* 画面内でどれくらい左右に振るか（メートル換算の仮想距離） */
-const RING_DISTANCE = 3.0;       // 3m前方の円周上に置く（左右の動きが分かりやすい）
+/* サイズ制御 */
+const BASE_SPRITE_SIZE = 0.8;  // 基準サイズ（画面内優先）
+const BASE_DISTANCE_M = 50;    // 50mで scale=1
+const SCALE_MIN = 0.7;
+const SCALE_MAX = 1.5;
 
-/* 平滑化（小さいほど安定・大きいほど反応） */
-const ALPHA_GPS = 0.10;
-const ALPHA_HEAD = 0.15;
-const ALPHA_POS = 0.15;
+/* 平滑化（安定重視） */
+const ALPHA_GPS  = 0.05;
+const ALPHA_HEAD = 0.05;
+const ALPHA_POS  = 0.08;
 
-/* ====== ユーティリティ ====== */
+/* ========= ユーティリティ ========= */
+
 function clamp(v,a,b){ return Math.min(Math.max(v,a),b); }
 function lerp(a,b,t){ return a + (b-a)*t; }
 function wrapPi(r){
@@ -82,18 +113,30 @@ function bearingRad(lat1, lon1, lat2, lon2){
   const x =
     Math.cos(deg2rad(lat1))*Math.sin(deg2rad(lat2)) -
     Math.sin(deg2rad(lat1))*Math.cos(deg2rad(lat2))*Math.cos(deg2rad(lon2-lon1));
-  return Math.atan2(y, x); // -pi..pi
+  return Math.atan2(y, x);
 }
 
-/* ====== three.js 基本 ====== */
+/* ========= three.js 基本 ========= */
+
 const hud = document.getElementById("hud");
 const canvas = document.getElementById("canvas");
-const renderer = new THREE.WebGLRenderer({ canvas, alpha:true, antialias:true });
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  alpha: true,
+  antialias: true
+});
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
+/* 背景（カメラ） */
+const bgScene = new THREE.Scene();
+const bgCam = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+bgScene.add(bgCam);
+let bgMesh = null;
+
+/* 前景（Sprite） */
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 200);
-camera.position.set(0, 0, 0);
+const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+camera.position.set(0,0,0);
 
 let sprite = null;
 let video = null;
@@ -102,28 +145,48 @@ let videoTexture = null;
 /* GPS / heading */
 let lat = null, lon = null;
 let latS = null, lonS = null;
-let heading = null;   // rad
-let headingS = 0;     // rad 平滑化
+let headingS = 0;
 
-/* 位置平滑化 */
+/* 表示位置平滑化 */
 let xS = 0;
-let zS = -RING_DISTANCE;
+
+/* ========= リサイズ ========= */
 
 function resize(){
-  const w = innerWidth, h = innerHeight;
-  renderer.setSize(w, h, false);
+  const w = innerWidth;
+  const h = innerHeight;
+  renderer.setSize(w,h,false);
   camera.aspect = w/h;
   camera.updateProjectionMatrix();
+  updateCover();
 }
-addEventListener("resize", resize);
-resize();
+window.addEventListener("resize", resize);
 
-/* ====== Start（ユーザー操作で権限を確実に出す） ====== */
+/* ========= 背景 cover 表示 ========= */
+
+function updateCover(){
+  if(!bgMesh || !video || !video.videoWidth) return;
+
+  const screenAspect = innerWidth / innerHeight;
+  const videoAspect  = video.videoWidth / video.videoHeight;
+
+  let sx = 1, sy = 1;
+  if(videoAspect > screenAspect){
+    sx = videoAspect / screenAspect;
+  }else{
+    sy = screenAspect / videoAspect;
+  }
+  bgMesh.scale.set(sx, sy, 1);
+}
+
+/* ========= Start ========= */
+
 async function startAll(){
   document.getElementById("start").style.display = "none";
 
   try{
     hud.textContent = "Requesting camera…";
+
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode:"environment", width:{ideal:1280}, height:{ideal:720} },
       audio: false
@@ -136,119 +199,105 @@ async function startAll(){
     await video.play();
 
     videoTexture = new THREE.VideoTexture(video);
-    scene.background = videoTexture;
 
-    hud.textContent = "Camera OK. Loading sprite…";
-
-    const tex = new THREE.TextureLoader().load(
-      IMAGE_URL,
-      ()=>{},
-      undefined,
-      ()=>alert("IMAGE LOAD FAILED: " + IMAGE_URL)
+    bgMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(2,2),
+      new THREE.MeshBasicMaterial({ map: videoTexture })
     );
+    bgScene.add(bgMesh);
+    updateCover();
 
+    /* Sprite */
+    const tex = new THREE.TextureLoader().load(IMAGE_URL);
     const mat = new THREE.SpriteMaterial({ map: tex, transparent:true });
     sprite = new THREE.Sprite(mat);
-
-    // まず見えるサイズ（大きめ）
-    sprite.scale.set(2.5, 2.5, 1);
-    sprite.position.set(0, 0, -RING_DISTANCE);
+    sprite.scale.set(BASE_SPRITE_SIZE, BASE_SPRITE_SIZE, 1);
+    sprite.position.set(0, 0, FIXED_Z);
     scene.add(sprite);
 
-    // GPS
-    hud.textContent = "Camera OK. Waiting GPS…";
+    /* GPS */
+    hud.textContent = "Waiting GPS…";
     navigator.geolocation.watchPosition(
       (p)=>{
         lat = p.coords.latitude;
         lon = p.coords.longitude;
         if(latS === null){ latS = lat; lonS = lon; }
       },
-      (e)=>{
-        alert("GPS ERROR: " + e.message);
-      },
-      { enableHighAccuracy:true, maximumAge:0, timeout:20000 }
+      (e)=>alert("GPS ERROR: "+e.message),
+      { enableHighAccuracy:true, maximumAge:0 }
     );
 
-    // 方位（Androidは deviceorientationabsolute が来ることが多い）
-    window.addEventListener("deviceorientationabsolute", (e)=>{
+    /* 方位 */
+    window.addEventListener("deviceorientationabsolute",(e)=>{
       if(e.alpha != null){
-        heading = deg2rad(e.alpha);
-        headingS = headingS + wrapPi(heading - headingS) * ALPHA_HEAD;
+        const h = deg2rad(e.alpha);
+        headingS = headingS + wrapPi(h - headingS) * ALPHA_HEAD;
       }
     });
-
-    // 来ない機種もあるので deviceorientation も保険
-    window.addEventListener("deviceorientation", (e)=>{
-      if(heading == null && e.alpha != null){
-        heading = deg2rad(e.alpha);
-        headingS = headingS + wrapPi(heading - headingS) * ALPHA_HEAD;
+    window.addEventListener("deviceorientation",(e)=>{
+      if(e.alpha != null && headingS === 0){
+        const h = deg2rad(e.alpha);
+        headingS = headingS + wrapPi(h - headingS) * ALPHA_HEAD;
       }
     });
 
   }catch(err){
-    alert("START ERROR: " + err.name + "\n" + err.message);
+    alert("START ERROR: "+err.message);
   }
 }
 
 document.getElementById("btn").addEventListener("click", startAll);
 
-/* ====== ループ ====== */
+/* ========= ループ ========= */
+
 function animate(){
   requestAnimationFrame(animate);
 
-  // 背景が無い間は描画しない
   if(!videoTexture){
     renderer.render(scene, camera);
     return;
   }
 
-  // spriteが無いなら背景だけ
-  if(!sprite){
+  if(!sprite || latS === null || lat === null){
+    renderer.render(bgScene, bgCam);
+    renderer.autoClear = false;
     renderer.render(scene, camera);
+    renderer.autoClear = true;
     return;
   }
 
-  // GPSがまだなら固定表示（とりあえず見える状態）
-  if(latS === null || lat === null){
-    sprite.position.set(0, 0, -RING_DISTANCE);
-    renderer.render(scene, camera);
-    hud.textContent = "Camera OK. Waiting GPS…（屋外で数十秒待つ）";
-    return;
-  }
-
-  // GPS平滑化
+  /* GPS 平滑化 */
   latS = lerp(latS, lat, ALPHA_GPS);
   lonS = lerp(lonS, lon, ALPHA_GPS);
 
-  // 目的地まで距離・方位
   const d = distM(latS, lonS, TARGET_LAT, TARGET_LON);
   const b = bearingRad(latS, lonS, TARGET_LAT, TARGET_LON);
+  const rel = wrapPi(b - headingS);
 
-  // heading が取れてない場合は正面固定（左右の動きだけ止まる）
-  const rel = wrapPi(b - (headingS || 0));
-
-  // 方位で左右へ（3m前方円周上）
-  const x = Math.sin(rel) * RING_DISTANCE;
-  const z = -Math.cos(rel) * RING_DISTANCE;
-
+  /* 左右のみ移動（消えない） */
+  const x = Math.sin(rel) * SIDE_RANGE;
   xS = lerp(xS, x, ALPHA_POS);
-  zS = lerp(zS, z, ALPHA_POS);
+  sprite.position.set(xS, 0, FIXED_Z);
 
-  sprite.position.set(xS, 0, zS);
-
-  // 距離でスケール（近づくと大きく）
-  // 例：d=BASE_DISTANCEでscale≈1、dが半分なら≈2
-  const scale = clamp(BASE_DISTANCE_M / Math.max(d, 1), SCALE_MIN, SCALE_MAX);
-  sprite.scale.set(2.5*scale, 2.5*scale, 1); // 画像は大きく見せたいので倍率を掛ける
+  /* サイズ制御（画面内優先） */
+  const scale = clamp(BASE_DISTANCE_M / Math.max(d,1), SCALE_MIN, SCALE_MAX);
+  sprite.scale.set(
+    BASE_SPRITE_SIZE * scale,
+    BASE_SPRITE_SIZE * scale,
+    1
+  );
 
   hud.textContent =
 `dist=${d.toFixed(1)}m  scale=${scale.toFixed(2)}
-rel(deg)=${rad2deg(rel).toFixed(1)}  heading(deg)=${headingS?rad2deg(headingS).toFixed(1):"NA"}
-lat=${latS.toFixed(6)} lon=${lonS.toFixed(6)}
-Tip: 屋外でGPS精度が上がると安定します`;
+rel=${rad2deg(rel).toFixed(1)}deg`;
 
+  renderer.render(bgScene, bgCam);
+  renderer.autoClear = false;
   renderer.render(scene, camera);
+  renderer.autoClear = true;
 }
+
+resize();
 animate();
 </script>
 
