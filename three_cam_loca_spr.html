@@ -1,0 +1,270 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+    #c {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    #btn {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      z-index: 10;
+      font-size: 16px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 0;
+    }
+    #info {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 10;
+      background: rgba(0,0,0,.6);
+      color: #0f0;
+      font: 12px monospace;
+      padding: 6px;
+      white-space: pre;
+    }
+  </style>
+</head>
+<body>
+
+<div id="info">waiting...</div>
+<button id="btn">Start</button>
+<canvas id="c"></canvas>
+
+<script type="module">
+import * as THREE from "https://unpkg.com/three@0.160.1/build/three.module.js";
+
+/* ===== 設定 ===== */
+const IMAGE_URL = "./assets/object01.png";
+
+/* 表示したい目的地（例） */
+const TARGET_LAT = 39.696845;
+const TARGET_LON = 141.149665;
+
+/* 平滑化係数（小さいほど安定） */
+const ALPHA_GPS   = 0.05;
+const ALPHA_HEAD  = 0.08;
+const ALPHA_MOVE  = 0.10;
+
+/* 距離 → スケール */
+const SCALE_K   = 30;   // 大きいほど近づいた時に大きく
+const SCALE_MIN = 0.8;
+const SCALE_MAX = 5.0;
+
+/* ===== 初期化 ===== */
+const info = document.getElementById("info");
+const canvas = document.getElementById("c");
+
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  alpha: true,
+  antialias: true
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+let W = 1, H = 1;
+
+/* 背景用シーン（カメラ映像） */
+const bgScene = new THREE.Scene();
+const bgCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+bgScene.add(bgCam);
+
+/* 前景（AR） */
+const scene = new THREE.Scene();
+const cam = new THREE.PerspectiveCamera(60, 1, 0.01, 100);
+cam.position.set(0, 0, 0);
+
+/* Video */
+const video = document.createElement("video");
+video.playsInline = true;
+video.muted = true;
+video.autoplay = true;
+
+let videoTex = null;
+let bgMesh = null;
+
+/* Sprite */
+let sprite = null;
+
+/* センサー値 */
+let userLat = null, userLon = null;
+let latS = null, lonS = null;
+let headingS = 0;
+let relS = 0;
+let xS = 0, zS = -3;
+
+/* ===== ユーティリティ ===== */
+function clamp(v,a,b){ return Math.min(Math.max(v,a),b); }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function wrapPi(r){
+  r = (r + Math.PI) % (2*Math.PI);
+  if (r < 0) r += 2*Math.PI;
+  return r - Math.PI;
+}
+
+function distM(lat1, lon1, lat2, lon2){
+  const R=6371000;
+  const dLat=(lat2-lat1)*Math.PI/180;
+  const dLon=(lon2-lon1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2 +
+          Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*
+          Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+
+function bearingRad(lat1, lon1, lat2, lon2){
+  const y=Math.sin((lon2-lon1)*Math.PI/180)*Math.cos(lat2*Math.PI/180);
+  const x=Math.cos(lat1*Math.PI/180)*Math.sin(lat2*Math.PI/180)
+        -Math.sin(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*
+         Math.cos((lon2-lon1)*Math.PI/180);
+  return Math.atan2(y,x);
+}
+
+/* 背景を cover 表示（歪み防止） */
+function updateBackgroundCover(vw, vh){
+  if(!bgMesh) return;
+  const sa = W/H;
+  const va = vw/vh;
+  let sx=1, sy=1;
+  if(va > sa){
+    sx = va/sa; sy = 1;
+  }else{
+    sx = 1; sy = sa/va;
+  }
+  bgMesh.scale.set(sx, sy, 1);
+}
+
+/* ===== リサイズ ===== */
+function resize(){
+  W = innerWidth;
+  H = innerHeight;
+  renderer.setSize(W,H,false);
+  cam.aspect = W/H;
+  cam.updateProjectionMatrix();
+}
+addEventListener("resize", resize);
+resize();
+
+/* ===== スタート ===== */
+async function start(){
+  /* カメラ */
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: { ideal: "environment" },
+      width:  { ideal: 1280 },
+      height: { ideal: 720 }
+    },
+    audio: false
+  });
+  video.srcObject = stream;
+  await new Promise(r=>video.onloadedmetadata=r);
+  await video.play();
+
+  videoTex = new THREE.VideoTexture(video);
+  videoTex.colorSpace = THREE.SRGBColorSpace;
+
+  bgMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(2,2),
+    new THREE.MeshBasicMaterial({ map: videoTex })
+  );
+  bgScene.add(bgMesh);
+  updateBackgroundCover(video.videoWidth, video.videoHeight);
+
+  /* Sprite（歪まない・高解像度） */
+  const tex = new THREE.TextureLoader().load(IMAGE_URL);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+  const mat = new THREE.SpriteMaterial({
+    map: tex,
+    transparent: true
+  });
+
+  sprite = new THREE.Sprite(mat);
+  sprite.scale.set(2, 2, 1);   // 基準サイズ
+  scene.add(sprite);
+
+  /* GPS */
+  navigator.geolocation.watchPosition(p=>{
+    userLat = p.coords.latitude;
+    userLon = p.coords.longitude;
+    if(latS===null){
+      latS = userLat;
+      lonS = userLon;
+    }
+  }, console.error, { enableHighAccuracy:true, maximumAge:0 });
+
+  /* 方位 */
+  window.addEventListener("deviceorientationabsolute", e=>{
+    if(e.alpha!=null){
+      const h = THREE.MathUtils.degToRad(e.alpha);
+      headingS += wrapPi(h - headingS) * ALPHA_HEAD;
+    }
+  });
+
+  info.textContent = "running...";
+}
+
+document.getElementById("btn").onclick = start;
+
+/* ===== 描画 ===== */
+function animate(){
+  requestAnimationFrame(animate);
+
+  if(!sprite || latS===null || userLat===null){
+    if(bgMesh) renderer.render(bgScene, bgCam);
+    return;
+  }
+
+  latS = lerp(latS, userLat, ALPHA_GPS);
+  lonS = lerp(lonS, userLon, ALPHA_GPS);
+
+  const d = distM(latS, lonS, TARGET_LAT, TARGET_LON);
+  const b = bearingRad(latS, lonS, TARGET_LAT, TARGET_LON);
+  const rel = wrapPi(b - headingS);
+
+  relS += wrapPi(rel - relS) * ALPHA_HEAD;
+
+  const x = Math.sin(relS) * 3;
+  const z = -Math.cos(relS) * 3;
+
+  xS = lerp(xS, x, ALPHA_MOVE);
+  zS = lerp(zS, z, ALPHA_MOVE);
+
+  sprite.position.set(xS, 0, zS);
+
+  const scale = clamp(SCALE_K / Math.max(d,1), SCALE_MIN, SCALE_MAX);
+  sprite.scale.setScalar(scale);
+
+  renderer.render(bgScene, bgCam);
+  renderer.autoClear = false;
+  renderer.render(scene, cam);
+  renderer.autoClear = true;
+
+  info.textContent =
+`distance=${d.toFixed(1)}m
+scale=${scale.toFixed(2)}
+heading=${THREE.MathUtils.radToDeg(headingS).toFixed(1)}°`;
+}
+animate();
+</script>
+</body>
+</html>
