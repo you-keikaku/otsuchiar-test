@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>GPS Sprite SAFE FIXED</title>
+<title>GPS Sprite 10m ONLY</title>
 
 <script src="https://unpkg.com/three@0.160.1/build/three.min.js"></script>
 
@@ -54,37 +54,23 @@ html,body{
 <canvas id="canvas"></canvas>
 
 <script>
-/* ===== 設定 ===== */
+/* ===== 設定（ここだけ触ればOK） ===== */
 
 const IMAGE_URL = "./assets/object01.png";
 
+/* 目的地 */
 const TARGET_LAT = 39.696845;
 const TARGET_LON = 141.149665;
 
-/* 表示位置 */
-const FIXED_Z = -2.5;
-const SIDE_RANGE = 1.2;
+/* 表示条件 */
+const SHOW_DISTANCE_M = 10;   // ★ 10m以内で表示
 
-/* ★ 安全サイズ（縦画面基準） */
-const BASE_SPRITE_SIZE = 0.6;   // ← これが肝
-const SCALE_MIN = 0.8;
-const SCALE_MAX = 1.3;
-const BASE_DISTANCE_M = 60;
-
-/* 平滑化 */
-const ALPHA_GPS  = 0.05;
-const ALPHA_HEAD = 0.05;
-const ALPHA_POS  = 0.08;
+/* 表示位置・サイズ（固定） */
+const FIXED_Z = -2.0;         // 常にカメラ正面
+const BASE_SPRITE_SIZE = 0.6; // 縦画面で必ず収まる安全サイズ
 
 /* ===== util ===== */
-function clamp(v,a,b){ return Math.min(Math.max(v,a),b); }
-function lerp(a,b,t){ return a+(b-a)*t; }
 function deg2rad(d){ return d*Math.PI/180; }
-function wrapPi(r){
-  r=(r+Math.PI)%(2*Math.PI);
-  if(r<0) r+=2*Math.PI;
-  return r-Math.PI;
-}
 function distM(lat1,lon1,lat2,lon2){
   const R=6371000;
   const dLat=deg2rad(lat2-lat1);
@@ -93,14 +79,8 @@ function distM(lat1,lon1,lat2,lon2){
     Math.cos(deg2rad(lat1))*Math.cos(deg2rad(lat2))*Math.sin(dLon/2)**2;
   return 2*R*Math.asin(Math.sqrt(a));
 }
-function bearingRad(lat1,lon1,lat2,lon2){
-  const y=Math.sin(deg2rad(lon2-lon1))*Math.cos(deg2rad(lat2));
-  const x=Math.cos(deg2rad(lat1))*Math.sin(deg2rad(lat2))-
-          Math.sin(deg2rad(lat1))*Math.cos(deg2rad(lat2))*Math.cos(deg2rad(lon2-lon1));
-  return Math.atan2(y,x);
-}
 
-/* ===== three ===== */
+/* ===== three.js ===== */
 
 const hud=document.getElementById("hud");
 const renderer=new THREE.WebGLRenderer({
@@ -109,21 +89,22 @@ const renderer=new THREE.WebGLRenderer({
 });
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 
+/* 背景（カメラ） */
 const bgScene=new THREE.Scene();
 const bgCam=new THREE.OrthographicCamera(-1,1,1,-1,0,1);
 bgScene.add(bgCam);
 
+/* 前景 */
 const scene=new THREE.Scene();
 const camera=new THREE.PerspectiveCamera(60,1,0.1,100);
 camera.position.set(0,0,0);
 
 let bgMesh, video, videoTexture, sprite;
 
-/* センサー */
-let lat=null, lon=null, latS=null, lonS=null;
-let headingS=0;
-let xS=0;
+/* GPS */
+let lat=null, lon=null;
 
+/* ===== resize ===== */
 function resize(){
   const w=innerWidth, h=innerHeight;
   renderer.setSize(w,h,false);
@@ -133,12 +114,14 @@ function resize(){
 }
 window.addEventListener("resize",resize);
 
+/* 背景 cover */
 function updateCover(){
   if(!bgMesh||!video||!video.videoWidth) return;
   const sa=innerWidth/innerHeight;
   const va=video.videoWidth/video.videoHeight;
   let sx=1, sy=1;
-  if(va>sa) sx=va/sa; else sy=sa/va;
+  if(va>sa) sx=va/sa;
+  else sy=sa/va;
   bgMesh.scale.set(sx,sy,1);
 }
 
@@ -146,6 +129,7 @@ function updateCover(){
 async function start(){
   document.getElementById("start").style.display="none";
 
+  /* カメラ */
   const stream=await navigator.mediaDevices.getUserMedia({
     video:{facingMode:"environment"},
     audio:false
@@ -165,26 +149,25 @@ async function start(){
   bgScene.add(bgMesh);
   updateCover();
 
+  /* Sprite（固定サイズ・正面） */
   const tex=new THREE.TextureLoader().load(IMAGE_URL);
   sprite=new THREE.Sprite(
     new THREE.SpriteMaterial({map:tex,transparent:true})
   );
   sprite.position.set(0,0,FIXED_Z);
   sprite.scale.set(BASE_SPRITE_SIZE,BASE_SPRITE_SIZE,1);
+  sprite.visible=false; // ★ 初期は非表示
   scene.add(sprite);
 
-  navigator.geolocation.watchPosition(p=>{
-    lat=p.coords.latitude;
-    lon=p.coords.longitude;
-    if(latS===null){latS=lat; lonS=lon;}
-  });
-
-  window.addEventListener("deviceorientationabsolute",e=>{
-    if(e.alpha!=null){
-      const h=deg2rad(e.alpha);
-      headingS+=wrapPi(h-headingS)*ALPHA_HEAD;
-    }
-  });
+  /* GPS */
+  navigator.geolocation.watchPosition(
+    p=>{
+      lat=p.coords.latitude;
+      lon=p.coords.longitude;
+    },
+    e=>alert("GPS ERROR: "+e.message),
+    { enableHighAccuracy:true }
+  );
 }
 document.getElementById("btn").onclick=start;
 
@@ -199,34 +182,21 @@ function animate(){
 
   renderer.render(bgScene,bgCam);
 
-  if(!sprite||latS===null||lat===null){
+  if(!sprite || lat===null){
     renderer.autoClear=false;
     renderer.render(scene,camera);
     renderer.autoClear=true;
     return;
   }
 
-  latS=lerp(latS,lat,ALPHA_GPS);
-  lonS=lerp(lonS,lon,ALPHA_GPS);
+  const d=distM(lat,lon,TARGET_LAT,TARGET_LON);
 
-  const d=distM(latS,lonS,TARGET_LAT,TARGET_LON);
-  const b=bearingRad(latS,lonS,TARGET_LAT,TARGET_LON);
-  const rel=wrapPi(b-headingS);
+  /* ★ 出る／出ない だけ */
+  sprite.visible = (d <= SHOW_DISTANCE_M);
 
-  const x=Math.sin(rel)*SIDE_RANGE;
-  xS=lerp(xS,x,ALPHA_POS);
-  sprite.position.set(xS,0,FIXED_Z);
-
-  const scale=clamp(BASE_DISTANCE_M/Math.max(d,1),SCALE_MIN,SCALE_MAX);
-  sprite.scale.set(
-    BASE_SPRITE_SIZE*scale,
-    BASE_SPRITE_SIZE*scale,
-    1
-  );
-
-  hud.textContent=
-`dist=${d.toFixed(1)}m
-scale=${scale.toFixed(2)}`;
+  hud.textContent =
+`distance=${d.toFixed(1)}m
+visible=${sprite.visible}`;
 
   renderer.autoClear=false;
   renderer.render(scene,camera);
