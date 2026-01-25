@@ -163,6 +163,8 @@ resize();
 
 /* ===== スタート ===== */
 async function start(){
+  alert("START CALLED");  
+  
   /* カメラ */
   const stream = await navigator.mediaDevices.getUserMedia({
     video: {
@@ -284,3 +286,4 @@ animate();
 </script>
 </body>
 </html>
+
