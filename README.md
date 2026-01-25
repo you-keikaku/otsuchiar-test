@@ -1,1 +1,0 @@
-# OtsuchiAR-TESTe032tv
