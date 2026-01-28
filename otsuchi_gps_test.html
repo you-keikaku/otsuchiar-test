@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>GPS AR Multi Points</title>
+
+<script src="https://unpkg.com/three@0.160.1/build/three.min.js"></script>
+
+<style>
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;}
+#cam{position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:0;}
+#canvas{position:fixed;inset:0;width:100vw;height:100vh;z-index:1;pointer-events:none;}
+#start{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.85);z-index:10;}
+#start button{font-size:18px;padding:14px 18px;border-radius:10px;border:none;}
+#hud{position:fixed;top:0;left:0;right:0;z-index:11;background:rgba(0,0,0,.6);color:#0f0;font:12px/1.35 monospace;padding:8px;white-space:pre-wrap;}
+#hud.error{color:#ff8080;}
+</style>
+</head>
+
+<body>
+<video id="cam" autoplay muted playsinline></video>
+<canvas id="canvas"></canvas>
+<div id="hud">waiting…</div>
+<div id="start"><button id="btn">Start</button></div>
+
+<script>
+/* ========= 設定：複数ポイント =========
+  - enterM: ここより近づいたら「表示ON」
+  - exitM : ここより離れたら「表示OFF」(enterより少し大きくする＝ヒステリシス)
+  - priority: 同距離付近で競合したときの優先度（大きい方が優先）
+*/
+const POINTS = [
+  { id:"p1", name:"ポイント1", lat:39.359430, lon:141.904845, img:"./assets/object01.png", baseW:300, enterM:10, exitM:14, priority:1 },
+  { id:"p2", name:"ポイント2", lat:39.359500, lon:141.904900, img:"./assets/object02.png", baseW:300, enterM:10, exitM:14, priority:1 },
+  // 追加例（近接ポイントでもOK）
+  // { id:"p3", name:"ポイント3", lat:..., lon:..., img:"./assets/object03.png", baseW:260, enterM:8, exitM:12, priority:2 },
+];
+
+/* 近接ポイントで“切り替わり続ける”のを防ぐ */
+const SWITCH_COOLDOWN_MS = 1200;  // 切替後、最低この時間は別ポイントへ切替えない
+
+/* GPS更新が荒い環境で揺れを抑える（止まり防止＆チラつき抑制） */
+const ALPHA_GPS = 0.20;           // 0.1〜0.3（大きいほど追従、今回は控えめ平滑化）
+
+/* ========= util ========= */
+function deg2rad(d){return d*Math.PI/180;}
+function distM(lat1,lon1,lat2,lon2){
+  const R=6371000;
+  const dLat=deg2rad(lat2-lat1);
+  const dLon=deg2rad(lon2-lon1);
+  const a=Math.sin(dLat/2)**2+
+    Math.cos(deg2rad(lat1))*Math.cos(deg2rad(lat2))*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+function lerp(a,b,t){ return a+(b-a)*t; }
+
+/* ========= UI / three ========= */
+const hud = document.getElementById("hud");
+
+const renderer = new THREE.WebGLRenderer({
+  canvas: document.getElementById("canvas"),
+  alpha: true,
+  antialias: true
+});
+renderer.setPixelRatio(window.devicePixelRatio || 1);
+
+const scene = new THREE.Scene();
+let camera;
+
+/* 表示用Sprite（1枚だけ使い回す） */
+let sprite = null;
+let currentPoint = null;          // 現在表示中のポイント
+let lastSwitchAt = 0;
+
+/* GPS */
+let lat = null, lon = null;
+let latS = null, lonS = null;     // 平滑化後
+
+function resize(){
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  renderer.setSize(w, h, false);
+
+  camera = new THREE.OrthographicCamera(-w/2, w/2, h/2, -h/2, 0, 10);
+  camera.position.z = 5;
+}
+window.addEventListener("resize", resize);
+
+/* ========= カメラ起動 ========= */
+async function start(){
+  document.getElementById("start").style.display="none";
+
+  // カメラ
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:"environment"},
+      audio:false
+    });
+    document.getElementById("cam").srcObject = stream;
+  }catch(e){
+    hud.className = "error";
+    hud.textContent = "❌ カメラを使用できません。\nブラウザのカメラ許可を確認してください。";
+    return;
+  }
+
+  // Sprite（最初はダミー画像で生成→あとで差し替え）
+  const dummyTex = new THREE.Texture();
+  sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: dummyTex, transparent:true }));
+  sprite.position.set(0,0,1);
+  sprite.visible = false;
+  scene.add(sprite);
+
+  // GPS
+  navigator.geolocation.watchPosition(
+    (p)=>{
+      lat = p.coords.latitude;
+      lon = p.coords.longitude;
+      if(latS===null){ latS = lat; lonS = lon; }
+    },
+    (e)=>{
+      hud.className = "error";
+      if(e.code===1){
+        hud.textContent =
+          "❌ 位置情報が拒否されています。\n\n" +
+          "【iPhone】設定 → アプリ → Safari → 位置情報 →「許可」\n" +
+          "【Android】Chromeのサイト設定で位置情報を許可\n";
+      } else {
+        hud.textContent = "❌ GPSエラー: " + e.message;
+      }
+    },
+    { enableHighAccuracy:true, maximumAge:0, timeout:20000 }
+  );
+
+  resize();
+}
+document.getElementById("btn").onclick = start;
+
+/* ========= 画像ロード（ポイント切替時のみ） ========= */
+const textureCache = new Map(); // img URL -> texture
+function loadTexture(url){
+  return new Promise((resolve, reject)=>{
+    if(textureCache.has(url)){
+      resolve(textureCache.get(url));
+      return;
+    }
+    const loader = new THREE.TextureLoader();
+    loader.load(url, (tex)=>{
+      textureCache.set(url, tex);
+      resolve(tex);
+    }, undefined, (err)=>{
+      reject(err);
+    });
+  });
+}
+
+/* ========= “表示すべきポイント”を選ぶ =========
+  - 近接していても必ず1つに決める
+  - いま表示中なら exitM を使って“粘る”（ヒステリシス）
+*/
+function pickPoint(){
+  if(latS===null) return { chosen:null, nearest:null };
+
+  // nearest は HUD 表示用
+  let nearest = null;
+
+  // 表示候補（enter条件を満たす）
+  const candidates = [];
+  for(const p of POINTS){
+    const d = distM(latS, lonS, p.lat, p.lon);
+    if(!nearest || d < nearest.d) nearest = { p, d };
+
+    // すでに表示中のポイントは exitM で判定（粘る）
+    if(currentPoint && p.id === currentPoint.id){
+      if(d <= p.exitM) candidates.push({ p, d, inRange:true });
+    } else {
+      if(d <= p.enterM) candidates.push({ p, d, inRange:true });
+    }
+  }
+
+  if(candidates.length === 0){
+    return { chosen:null, nearest };
+  }
+
+  // 選び方：優先度→距離の順
+  candidates.sort((a,b)=>{
+    if(b.p.priority !== a.p.priority) return b.p.priority - a.p.priority;
+    return a.d - b.d;
+  });
+
+  return { chosen:candidates[0].p, nearest };
+}
+
+/* ========= ループ ========= */
+async function updateSpriteForPoint(p){
+  // 画像と縦横比を反映（比率保持）
+  const tex = await loadTexture(p.img);
+  const imgW = tex.image?.width || 1;
+  const imgH = tex.image?.height || 1;
+  const aspect = imgH / imgW;
+
+  const displayW = p.baseW;
+  const displayH = displayW * aspect;
+
+  sprite.material.map = tex;
+  sprite.material.needsUpdate = true;
+
+  sprite.scale.set(displayW, displayH, 1);
+  sprite.position.set(0,0,1); // 常に中央
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+
+  if(latS!==null && lat!==null){
+    // GPS平滑化
+    latS = lerp(latS, lat, ALPHA_GPS);
+    lonS = lerp(lonS, lon, ALPHA_GPS);
+
+    const { chosen, nearest } = pickPoint();
+    const now = Date.now();
+
+    // 表示ON/OFF
+    if(!chosen){
+      currentPoint = null;
+      if(sprite) sprite.visible = false;
+    } else {
+      // 切替クールダウン（近接ポイントのバタつき防止）
+      const wantSwitch = !currentPoint || chosen.id !== currentPoint.id;
+      const canSwitch = (now - lastSwitchAt) >= SWITCH_COOLDOWN_MS;
+
+      if(wantSwitch && canSwitch && sprite){
+        currentPoint = chosen;
+        lastSwitchAt = now;
+
+        // 画像差し替え（ポイント切替時のみロード）
+        updateSpriteForPoint(chosen).catch(()=>{
+          // 画像読み込み失敗でも止めない
+        });
+      } else if(!currentPoint) {
+        // 初回表示（クールダウン関係なし）
+        currentPoint = chosen;
+        lastSwitchAt = now;
+        if(sprite){
+          updateSpriteForPoint(chosen).catch(()=>{});
+        }
+      }
+
+      if(sprite) sprite.visible = true;
+    }
+
+    // HUD
+    if(nearest){
+      hud.className = "";
+      hud.textContent =
+        `GPS OK\n` +
+        `nearest=${nearest.p.name}  d=${nearest.d.toFixed(1)}m\n` +
+        `show=${currentPoint ? currentPoint.name : "(none)"}\n` +
+        `hint: 10m未満で近接しても停止しない（ヒステリシス+クールダウン）`;
+    } else {
+      hud.className = "";
+      hud.textContent = "GPS取得中…（屋外で数十秒待つ）";
+    }
+  } else {
+    hud.className = "";
+    hud.textContent = "カメラ起動中… GPS待機中…";
+  }
+
+  if(camera){
+    renderer.render(scene, camera);
+  }
+}
+
+resize();
+animate();
+</script>
+
+</body>
+</html>
